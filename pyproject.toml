@@ -1,0 +1,12 @@
+[project]
+name = "origami"
+version = "0.1.0"
+description = "Mathematical animations made with Manim Community"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "manim>=0.21.0,<0.22",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,33 @@
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Manim render output and caches
+media/
+videos/
+partial_movie_files/
+Tex/
+texts/
+
+# LaTeX intermediate files
+*.aux
+*.dvi
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*~

@@ -1,2 +1,38 @@
-# origami
-Math animations
+# Origami
+
+Mathematical animations made with [Manim Community](https://www.manim.community/).
+
+## Setup
+
+The project uses [`uv`](https://docs.astral.sh/uv/) to create an isolated Python
+environment and lock all Python dependencies.
+
+On Debian or Ubuntu, install the native rendering and LaTeX dependencies once:
+
+```bash
+./scripts/install-system-deps.sh
+```
+
+Then install `uv` if needed and synchronize the project environment:
+
+```bash
+python3 -m pip install --user uv
+uv sync
+```
+
+Check that Manim and its external tools are available:
+
+```bash
+uv run manim checkhealth
+```
+
+## Rendering
+
+Put scene files in the repository and render one by its class name. For example:
+
+```bash
+uv run manim -pql scenes/example.py ExampleScene
+```
+
+Use `-pqh` instead of `-pql` for a high-quality final render. Generated videos,
+images, and intermediate files are written under `media/` and ignored by Git.
