@@ -36,3 +36,9 @@ uv run manim -pql scenes/example.py ExampleScene
 
 Use `-pqh` instead of `-pql` for a high-quality final render. Generated videos,
 images, and intermediate files are written under `media/` and ignored by Git.
+
+## Projects
+
+- [Ganesh 2026](projects/ganesh_2026/README.md): a 45-second portrait drawing
+  made with one continuous stroke. Includes editable vector artwork, a
+  project-specific render configuration, and frame-by-frame verification.
