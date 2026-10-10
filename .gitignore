@@ -10,6 +10,10 @@ __pycache__/
 # Manim render output and caches
 # All projects write generated files here. Keep input images/videos trackable.
 /media/
+/projects/india_railway_2026/data/
+.env
+.env.*
+!.env.example
 
 # Editors and operating systems
 .DS_Store

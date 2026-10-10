@@ -1,0 +1,15 @@
+{
+  "publisher": "Survey of India",
+  "retrieved_date": "2026-10-10",
+  "source_page": "https://surveyofindia.gov.in/pages/outline-maps-of-india",
+  "archive_url": "https://surveyofindia.gov.in/documents/Outline_of_India.zip",
+  "archive_sha256": "bf48477f01fe8addd6384490fc6f8decc9643110331ffef2c3f17e5cccd53b88",
+  "usage_notice_url": "https://www.surveyofindia.gov.in/documents/ibd-vectorformat.pdf",
+  "usage_notice_sha256": "8e2780977e1f16c312d7a2bdebb0ef84543efacce1f91f23d685f5b0455abbcc",
+  "political_reference_url": "https://surveyofindia.gov.in/UserFiles/files/POL_MAP_4M_ENGLISH_13thEdn2026%281%29.pdf",
+  "political_reference_sha256": "62f46ae5c7444048ee58920f14f80ba1aa60a3db344be7502d11f146abefe8ca",
+  "political_reference_edition": "13th edition, 2026",
+  "check": "Visual comparison of the overall official external outline, northern extent, northeast, Lakshadweep and Andaman/Nicobar island groups. Not a survey-grade vertex comparison between maps of different scales.",
+  "geometry": "All 629724 original points and 1151 rings retained without simplification; WGS84 Lambert Conformal Conic CRS read from the supplied PRJ.",
+  "usage": "SOI retains copyright and intellectual property rights. Supplied notice permits individual/internal/educational/research/website uses but prohibits commercial usage. Do not assume monetized or sponsored publication is permitted. No license to redistribute independently is asserted."
+}

@@ -7,7 +7,7 @@ Independent animation projects made with [Manim Community](https://www.manim.com
 ```text
 projects/
   ganesh_2026/          # Ganesh artwork, scene, assets, and verification tools
-  india_railway_2026/   # Starter for the next animation
+  india_railway_2026/   # Cached train replay, official map, acquisition and tests
 scripts/               # Shared environment setup
 media/                 # Generated exports and caches (ignored by Git)
 pyproject.toml          # Shared Python dependencies
@@ -47,12 +47,16 @@ uv run manim checkhealth
 - [Ganesh 2026](projects/ganesh_2026/README.md): a 45-second portrait drawing
   made with one continuous stroke. Includes editable vector artwork, a
   project-specific render configuration, and frame-by-frame verification.
-- [India Railway 2026](projects/india_railway_2026/README.md): prepared workspace
-  for the next animation; content and storyboard are not yet defined.
+- [India Railway 2026](projects/india_railway_2026/README.md): a two-pass,
+  offline replay of recorded passenger journeys on 10 October 2026 IST.
+  Includes the official Survey of India outline, cache controls, and a static
+  design proof; actual replay exports require a configured RailRadar key and data.
 
 Follow each project's README for its render command. Use its explicit config
 to preserve the intended aspect ratio; for a portrait draft, override only
 resolution with `-r 360,640` instead of a landscape quality preset.
 
 Keep generated videos, stills, and caches under `media/<project_name>/`.
+Railway acquisition records instead live in its ignored `data/` directory,
+separate from media. Never delete that cache merely to regenerate an export.
 The shared `.venv/` is local tooling, not a project asset, and is also ignored.

@@ -10,6 +10,8 @@ sudo apt-get update
 sudo apt-get install -y \
     build-essential \
     ffmpeg \
+    fonts-dejavu-core \
+    fonts-lato \
     libcairo2-dev \
     libpango1.0-dev \
     pkg-config \
