@@ -8,23 +8,8 @@ __pycache__/
 .ruff_cache/
 
 # Manim render output and caches
-media/
-videos/
-partial_movie_files/
-Tex/
-texts/
-
-# LaTeX intermediate files
-*.aux
-*.dvi
-*.fdb_latexmk
-*.fls
-*.log
-*.nav
-*.out
-*.snm
-*.synctex.gz
-*.toc
+# All projects write generated files here. Keep input images/videos trackable.
+/media/
 
 # Editors and operating systems
 .DS_Store
