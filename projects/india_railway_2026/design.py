@@ -118,6 +118,63 @@ def base_image(dataset=None):
 def second_at(video_time):
     return min(86400, max(0, (video_time-INTRO)/REPLAY*86400))
 
+def motion_sample(segments, index, second, prepared=None):
+    """Fade inside contiguous evidence and retain up to seven minutes of trail."""
+    first = last = index
+    def joined(a, b):
+        return abs(a["end"]-b["start"]) < 1e-6 and abs(a["to"]-b["from"]) < 1e-5
+    if prepared is not None:
+        first, last = prepared[0][index]
+    else:
+        while first > 0 and joined(segments[first-1], segments[first]):
+            first -= 1
+        while last+1 < len(segments) and joined(segments[last], segments[last+1]):
+            last += 1
+    start, end = segments[first]["start"], segments[last]["end"]
+    fade = min(.15*86400/REPLAY, (end-start)/2)
+    opacity = float(np.clip(min(second-start, end-second)/fade, 0, 1))
+    opacity = opacity*opacity*(3-2*opacity)
+    tail_time = max(start, second-420)
+    tail = (segments[int(np.searchsorted(prepared[1], tail_time, side="right"))-1] if prepared is not None else
+            next(s for s in segments[first:index+1] if s["start"] <= tail_time < s["end"]))
+    def distance(segment, time):
+        return segment["from"]+(segment["to"]-segment["from"])*(time-segment["start"])/(segment["end"]-segment["start"])
+    return distance(tail, tail_time), distance(segments[index], second), opacity
+
+
+def paint_trains(image, active, second):
+    """Cairo preserves fractional pixel coverage; PIL's ellipse snaps to pixels."""
+    data = bytearray(image.convert("RGBA").tobytes("raw", "BGRA"))
+    surface = cairo.ImageSurface.create_for_data(data, cairo.FORMAT_ARGB32, *image.size)
+    context = cairo.Context(surface)
+    context.set_antialias(cairo.ANTIALIAS_BEST)
+    context.set_line_cap(cairo.LINE_CAP_ROUND)
+    context.set_line_join(cairo.LINE_JOIN_ROUND)
+    for journey, points, distances, index in active:
+        a, b, opacity = motion_sample(journey["segments"], index, second, journey.get("_motion"))
+        color = rgb(CATEGORIES[journey["category"]][1])
+        start, point = np.array([np.interp([a, b], distances, points[:, axis]) for axis in (0, 1)]).T
+        inside = points[np.searchsorted(distances, a, side="right"):np.searchsorted(distances, b)]
+        context.set_source_rgba(*color, opacity)
+        context.set_line_width(4)
+        context.move_to(*start)
+        for vertex in inside:
+            context.line_to(*vertex)
+        context.line_to(*point)
+        context.stroke()
+        halo = tuple(v*.18+background*.82 for v, background in zip(color, rgb(BACKGROUND)))
+        for radius, fill in ((10, halo), (5.5, color)):
+            context.set_source_rgba(*fill, opacity)
+            context.arc(*point, radius, 0, 2*np.pi)
+            context.fill()
+        context.set_source_rgba(1, 1, 1, opacity)
+        context.set_line_width(1)
+        context.arc(*point, 5.5, 0, 2*np.pi)
+        context.stroke()
+    surface.flush()
+    return Image.frombuffer("RGBA", image.size, data, "raw", "BGRA", 0, 1).convert("RGB")
+
+
 class FrameRenderer:
     """One composition per export, with prepared routes and cached static holds."""
     def __init__(self, dataset=None):
@@ -145,8 +202,8 @@ class FrameRenderer:
             return image
         journeys = dataset["journeys"]
         synthetic = dataset.get("synthetic_test_only", False)
-        active = [(j, p, d, s) for j, p, d in self.routes
-                  if (s := next((s for s in j["segments"] if s["start"] <= second < s["end"]), None)) is not None]
+        active = [(j, p, d, index) for j, p, d in self.routes
+                  if (index := next((i for i, s in enumerate(j["segments"]) if s["start"] <= second < s["end"]), None)) is not None]
         counts = dict.fromkeys(CATEGORIES, 0)
         for journey, _, _, _ in active:
             counts[journey["category"]] += 1
@@ -163,19 +220,8 @@ class FrameRenderer:
                       f"Day complete · {len(journeys)} usable / {dataset['coverage']['selected']} selected journeys")
         text(draw, (64, 219), status, 23, MUTED)
         if INTRO <= video_time < INTRO+REPLAY:
-            for journey, points, distances, segment in active:
-                color = CATEGORIES[journey["category"]][1]
-                def along(t):
-                    return segment["from"]+(segment["to"]-segment["from"])*(t-segment["start"])/(segment["end"]-segment["start"])
-                a, b = along(max(segment["start"], second-420)), along(second)
-                point = [np.interp(b, distances, points[:, axis]) for axis in (0, 1)]
-                start = [np.interp(a, distances, points[:, axis]) for axis in (0, 1)]
-                inside = points[np.searchsorted(distances, a, side="right"):np.searchsorted(distances, b)]
-                draw.line([tuple(start), *[tuple(p) for p in inside], tuple(point)], fill=color, width=4)
-                x, y = point
-                halo = tuple(round(255*(v*.18+b*.82)) for v, b in zip(rgb(color), rgb(BACKGROUND)))
-                draw.ellipse((x-10, y-10, x+10, y+10), fill=halo)
-                draw.ellipse((x-6, y-6, x+6, y+6), fill=color, outline="#FFFFFF", width=1)
+            image = paint_trains(image, active, second)
+            draw = ImageDraw.Draw(image)
             for i, category in enumerate(CATEGORIES):
                 if category in self.represented:
                     text(draw, (490+(i % 2)*490, 1450+(i//2)*58), f"{counts[category]:02d}", 24, CATEGORIES[category][1], True)
