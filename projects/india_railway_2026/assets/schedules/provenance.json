@@ -1,0 +1,71 @@
+{
+  "prepared_at": "2026-10-17T22:08:22.942708+00:00",
+  "target_date": "2026-10-15",
+  "selection": "All valid available timetable records; no geographic or train-count sampling",
+  "precedence": [
+    "gtfs",
+    "railraag",
+    "additional"
+  ],
+  "sources": {
+    "gtfs.zip": {
+      "url": "https://raw.githubusercontent.com/Neo2308/indianrailways-gtfs/b340b7048e99c18330ad333e8210d61161ac7a43/gtfs/gtfs.zip",
+      "stored_sha256": "a0347d046ccc66b182f08df88dd5eb6153fd19610a58c87d14e1e6910c937be8",
+      "stored_bytes": 4173379,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.283760+00:00"
+    },
+    "gtfs-README.txt": {
+      "url": "https://raw.githubusercontent.com/Neo2308/indianrailways-gtfs/b340b7048e99c18330ad333e8210d61161ac7a43/README.md",
+      "stored_sha256": "52f284a17e05ee66dd235cbe0a0e2ae52aee9b973b6f7cdfdb92adbfb64d38a0",
+      "stored_bytes": 2371,
+      "local_snapshot_saved_at": "2026-10-17T22:04:30.411266+00:00"
+    },
+    "railraag-trains.bin": {
+      "url": "https://raw.githubusercontent.com/shwetankg07/RailRaag/656f4d7db73d9d89ef2393377bd29987940d2cbc/public/data/trains.bin",
+      "stored_sha256": "071c7d176c25d4ae70a2dbd3d5c681a4563094873d8aa457bf36fd3c7c4234f8",
+      "stored_bytes": 1212586,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.287302+00:00"
+    },
+    "railraag-meta.json.gz": {
+      "url": "https://raw.githubusercontent.com/shwetankg07/RailRaag/656f4d7db73d9d89ef2393377bd29987940d2cbc/public/data/trains-meta.json",
+      "stored_sha256": "ac9afab2eb068523b5831247b5c03d020819de359489bb67f8e53010f1b1ac30",
+      "stored_bytes": 58630,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.335544+00:00"
+    },
+    "railraag-stations.json.gz": {
+      "url": "https://raw.githubusercontent.com/shwetankg07/RailRaag/656f4d7db73d9d89ef2393377bd29987940d2cbc/public/data/stations.json",
+      "stored_sha256": "7af45c4d59250a9597b9785ce21451e02eae9dce6717785811f40dd6e46e7302",
+      "stored_bytes": 201850,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.468323+00:00"
+    },
+    "railraag-build-report.json.gz": {
+      "url": "https://raw.githubusercontent.com/shwetankg07/RailRaag/656f4d7db73d9d89ef2393377bd29987940d2cbc/pipeline/build-report-v2.json",
+      "stored_sha256": "3ce4cc46b331a723ac1eb495aaa7c541f0c3ae1ac2183235165c360c215b9cbb",
+      "stored_bytes": 606,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.470429+00:00"
+    },
+    "railraag-LICENSE.txt": {
+      "url": "https://raw.githubusercontent.com/shwetankg07/RailRaag/656f4d7db73d9d89ef2393377bd29987940d2cbc/LICENSE",
+      "stored_sha256": "e176f532d120d0e2b93951df7d3a19129abd8e1fb51edee8297cb41fb326d813",
+      "stored_bytes": 1553,
+      "local_snapshot_saved_at": "2026-10-17T22:04:18.470429+00:00"
+    },
+    "additional-trains.json.gz": {
+      "url": "https://raw.githubusercontent.com/prasenjit-27/Indian-Railway-Data/1dc0ddbc6a06b09ef69d4825ff3127c1f29640fa/trains.json",
+      "stored_sha256": "588447844e430f62dd09598941b2add8963264aa81855ec7b9c4a9e59fc47e13",
+      "stored_bytes": 7682210,
+      "local_snapshot_saved_at": "2026-10-17T22:04:23.868779+00:00"
+    },
+    "additional-LICENSE.txt": {
+      "url": "https://raw.githubusercontent.com/prasenjit-27/Indian-Railway-Data/1dc0ddbc6a06b09ef69d4825ff3127c1f29640fa/LICENSE",
+      "stored_sha256": "3473694bcef038389dac0d3c188e78b7893368e8dde5ba0022101642442faa07",
+      "stored_bytes": 1089,
+      "local_snapshot_saved_at": "2026-10-17T22:04:23.881840+00:00"
+    }
+  },
+  "licenses": {
+    "gtfs": "No explicit dataset license found; upstream notices retained. Redistribution rights not established.",
+    "railraag": "Upstream license claims CC0 timetable data, but build code says NTES; provenance inconsistency retained.",
+    "additional": "MIT; see sources/additional-LICENSE.txt"
+  }
+}
