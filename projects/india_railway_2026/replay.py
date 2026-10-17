@@ -18,6 +18,8 @@ def load_prepared(directory=DATA):
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("synthetic_test_only"):
         raise RuntimeError("Synthetic previews cannot be loaded as a production replay")
+    if data.get("scheduled_preview"):
+        raise RuntimeError("Scheduled previews cannot be loaded as a recorded-observation replay")
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     if hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("frozen_sha256"):
         raise RuntimeError("Frozen dataset integrity check failed")
@@ -113,6 +115,7 @@ def verify(data, video, directory=MEDIA, draft=False, *, full=False):
         video_hash = hashlib.file_digest(source, "sha256").hexdigest()
     report.update({"checks": checks, "video": str(video), "coverage": data["coverage"],
                    "synthetic_test_only": bool(data.get("synthetic_test_only")),
+                   "scheduled_preview": bool(data.get("scheduled_preview")), "date": data.get("date"), "basis": data.get("basis"),
                    "sample_indices": indices, "video_sha256": video_hash,
                    "dataset_sha256": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
                    "boundary_sha256": boundary_hash(), "boundary_rings": len(official_map()[2]),

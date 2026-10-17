@@ -1,5 +1,6 @@
 """Offline composition; a single deterministic frame function drives Manim and audits."""
 from functools import lru_cache
+from datetime import date
 import cairo
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -61,6 +62,7 @@ def base_image(dataset=None):
     else:
         routes = [j["route_pixels"] for j in (dataset or {}).get("journeys", [])]
     mapped = bool((dataset or {}).get('track_source'))
+    scheduled = bool((dataset or {}).get("scheduled_preview"))
     if mapped:
         _, provenance = load_tracks()
         if dataset['railway_geometry_sha256'] != provenance['geometry_sha256']:
@@ -68,8 +70,9 @@ def base_image(dataset=None):
         # Thin, subdued national network; active demonstration paths stay legible.
         for route in network_pixels():
             draw.line([tuple(p) for p in route], fill='#B2BFB5', width=2)
-        for route in routes:
-            draw.line([tuple(p) for p in route], fill='#7B9488', width=3, joint='curve')
+        if not scheduled:
+            for route in routes:
+                draw.line([tuple(p) for p in route], fill='#7B9488', width=3, joint='curve')
     else:
         for route in routes:
             draw.line([tuple(p) for p in route], fill=BACKGROUND, width=7, joint='curve')
@@ -80,29 +83,34 @@ def base_image(dataset=None):
         draw.ellipse((x-2, y-2, x+2, y+2), fill=MUTED)
         draw.text((x+dx, y+dy), name, font=font(26), fill=INK, stroke_width=2, stroke_fill=BACKGROUND)
     synthetic = bool((dataset or {}).get("synthetic_test_only"))
-    text(draw, (64, 49), "INDIA / IN MOTION" if not synthetic else "INDIA / DESIGN PREVIEW", 22, MUTED, True)
+    text(draw, (64, 49), "INDIA / TIMETABLE PREVIEW" if scheduled else "INDIA / IN MOTION" if not synthetic else "INDIA / DESIGN PREVIEW", 22, MUTED, True)
     text(draw, (60, 85), "A day on the rails", 60, bold=True)
-    text(draw, (64, 164), "10 OCTOBER 2026", 27, MUTED)
+    day = date.fromisoformat((dataset or {}).get("date", "2026-10-10"))
+    text(draw, (64, 164), f"{day.day:02d} {day.strftime('%B').upper()} {day.year}", 27, MUTED)
     draw.line((64, 266, 1016, 266), fill="#CCD4CA", width=2)
     draw.rounded_rectangle((44, 1388, 1036, 1620), radius=18, fill="#FFFFFF", outline="#E0E4DA", width=1)
-    text(draw, (64, 1400), "SIMULATED SERVICES / SIX COLOUR FAMILIES" if synthetic else "PASSENGER JOURNEYS / SELECTED SAMPLE", 21, MUTED, True)
+    text(draw, (64, 1400), "SCHEDULED PASSENGER SERVICES / INCLUDING LOCALS" if scheduled else "SIMULATED SERVICES / SIX COLOUR FAMILIES" if synthetic else "PASSENGER JOURNEYS / SELECTED SAMPLE", 21, MUTED, True)
     represented = {j["category"] for j in (dataset or {}).get("journeys", [])}
     for i, (category, (label, color)) in enumerate(CATEGORIES.items()):
         x, y = 64+(i % 2)*490, 1450+(i//2)*58
         draw.ellipse((x, y+7, x+12, y+19), fill=color)
-        text(draw, (x+24, y), label, 25)
+        text(draw, (x+24, y), "Other passenger services" if scheduled and category == "express" else label, 25)
         if dataset is None or category not in represented:
             text(draw, (x+24, y+27), "awaiting data" if dataset is None else "not represented", 17, MUTED)
-    text(draw, (64, 1638), "SIMULATED ACTIVITY / 24 HOURS" if synthetic else "SAMPLE ACTIVITY / 24 HOURS", 19, MUTED, True)
+    text(draw, (64, 1638), "DISPLAYED SCHEDULED ACTIVITY / 24 HOURS" if scheduled else "SIMULATED ACTIVITY / 24 HOURS" if synthetic else "SAMPLE ACTIVITY / 24 HOURS", 19, MUTED, True)
     draw.line((64, 1766, 1016, 1766), fill="#CCD4CA", width=1)
     for hour in (0, 6, 12, 18, 24):
         text(draw, (min(64+952*hour/24, 963), 1775), f"{hour:02d}:00", 18, MUTED)
-    text(draw, (64, 1832), "Simulated journeys & timings · Mapped railway tracks" if synthetic else
+    text(draw, (64, 1832), "Scheduled times · Inferred track paths · Coverage provisional" if scheduled else "Simulated journeys & timings · Mapped railway tracks" if synthetic else
          "Representative sample · Recorded timings · Interpolated positions", 22)
-    text(draw, (64, 1870), "Boundary: Survey of India · Noncommercial use only" + (" · Traffic simulated" if synthetic else " · Timings: RailRadar"), 19, MUTED)
+    text(draw, (64, 1870), "Boundary: Survey of India · Noncommercial use only" + ("" if scheduled else " · Traffic simulated" if synthetic else " · Timings: RailRadar"), 19, MUTED)
     if mapped:
         text(draw, (64, 1897), "Tracks: © OpenStreetMap contributors · openstreetmap.org/copyright · ODbL", 17, MUTED)
-    if synthetic:
+    if scheduled:
+        draw.rounded_rectangle((578, 304, 1016, 350), radius=12, fill="#F1E5C9")
+        text(draw, (594, 315), "TIMETABLE TEST / NOT ACTUAL RUNS", 19, "#806019", True)
+        text(draw, (594, 358), "Unmapped intervals omitted", 20, MUTED)
+    elif synthetic:
         draw.rounded_rectangle((578, 304, 1016, 350), radius=12, fill="#F1E5C9")
         text(draw, (594, 315), "SIMULATED TRAFFIC / OSM TRACKS", 19, "#806019", True)
         draw.line((775, 375, 814, 375), fill=TRACK, width=3)
@@ -117,6 +125,7 @@ def base_image(dataset=None):
 
 def second_at(video_time):
     return min(86400, max(0, (video_time-INTRO)/REPLAY*86400))
+
 
 def motion_sample(segments, index, second, prepared=None):
     """Fade inside contiguous evidence and retain up to seven minutes of trail."""
@@ -180,6 +189,23 @@ class FrameRenderer:
     def __init__(self, dataset=None):
         self.base, self.dataset = base_image(dataset), dataset
         self.routes = [(j, *route_arrays(j)) for j in (dataset or {}).get("journeys", [])]
+        intervals, starts, ends = [], [], []
+        prepared_routes = []
+        for original, points, distances in self.routes:
+            journey = dict(original)
+            segments = journey["segments"]
+            bounds, first = [], 0
+            for i, segment in enumerate(segments):
+                intervals.append((journey, points, distances, i))
+                starts.append(segment["start"])
+                ends.append(segment["end"])
+                if i+1 == len(segments) or abs(segment["end"]-segments[i+1]["start"]) >= 1e-6 or abs(segment["to"]-segments[i+1]["from"]) >= 1e-5:
+                    bounds.extend([(first, i)]*(i-first+1))
+                    first = i+1
+            journey["_motion"] = (bounds, np.array([s["start"] for s in segments]))
+            prepared_routes.append((journey, points, distances))
+        self.routes = prepared_routes
+        self.intervals, self.starts, self.ends = intervals, np.array(starts), np.array(ends)
         self.represented = {j["category"] for j, _, _ in self.routes}
         self.holds = {}
 
@@ -202,15 +228,21 @@ class FrameRenderer:
             return image
         journeys = dataset["journeys"]
         synthetic = dataset.get("synthetic_test_only", False)
-        active = [(j, p, d, index) for j, p, d in self.routes
-                  if (index := next((i for i, s in enumerate(j["segments"]) if s["start"] <= second < s["end"]), None)) is not None]
+        active = [self.intervals[i] for i in np.flatnonzero((self.starts <= second) & (second < self.ends))]
         counts = dict.fromkeys(CATEGORIES, 0)
         for journey, _, _, _ in active:
             counts[journey["category"]] += 1
         minute = min(1440, int(second//60))
         text(draw, (752, 177), f"{minute//60:02d}:{minute%60:02d}", 54, bold=True)
         text(draw, (960, 199), "IST", 21, MUTED)
-        if video_time < INTRO:
+        if dataset.get("scheduled_preview"):
+            if video_time < INTRO:
+                status = f"{len(journeys):,} mapped timetable journeys · 00:00–24:00 IST"
+            elif video_time < INTRO+REPLAY:
+                status = f"{sum(counts.values()):,} scheduled trains shown · interpolated positions"
+            else:
+                status = f"Day complete · {len(journeys):,} / {dataset['coverage']['selected']:,} timetable journeys mapped"
+        elif video_time < INTRO:
             status = f"{len(journeys)} {'invented' if synthetic else 'sampled'} journeys · 00:00–24:00 IST"
         elif video_time < INTRO+REPLAY:
             status = (f"{sum(counts.values()):02d} simulated trains · mapped tracks" if synthetic else
