@@ -1,14 +1,15 @@
 """Deterministic illustrative traffic, NEVER actual railway observations.
 
-City-to-city corridors are hand-authored design geometry, not verified tracks.
+Preview movements follow mapped OpenStreetMap tracks; services and timings are invented.
 This module is imported only by the opt-in preview/test workflow.
 """
 import numpy as np
 from geography import boundary_hash, pixels, project
 from model import active_counts
 from settings import DAY
+from tracks import load_tracks
 
-# Approximate geographical anchors; all connecting lines are illustrative.
+# Approximate city anchors used only by prepare_tracks.py, never drawn as connecting lines.
 NODES = {
     "Srinagar": (74.80, 34.08), "Jammu": (74.87, 32.73), "Amritsar": (74.87, 31.63),
     "Ludhiana": (75.86, 30.90), "Delhi": (77.21, 28.61), "Jaipur": (75.79, 26.91),
@@ -35,7 +36,7 @@ NODES = {
     "Bardhaman": (87.85, 23.23), "Kalyani": (88.43, 22.98),
 }
 
-# An interconnected illustrative network. Shared corridors stay aligned.
+# Candidate city sequences for synthetic services; prepare_tracks.py resolves mapped paths.
 CORRIDORS = [
     ("rajdhani", "Delhi Agra Gwalior Jhansi Bhopal Itarsi Nagpur Warangal Hyderabad"),
     ("rajdhani", "Delhi Kanpur Varanasi Patna Katihar Siliguri NewAlipurduar Guwahati"),
@@ -72,17 +73,17 @@ CORRIDORS = [
 def build_demo():
     journeys, routes = [], []
     speeds = {"vande": 110, "rajdhani": 90, "shatabdi": 95, "regional": 65, "local": 42, "express": 75}
-    for route_index, (category, names) in enumerate(CORRIDORS):
-        nodes = project([NODES[name] for name in names.split()])
-        # Densify without pretending these hand-authored corridors are surveyed track.
-        line = np.concatenate([np.linspace(a, b, 10, endpoint=False) for a, b in zip(nodes, nodes[1:])] + [nodes[-1:]])
+    geometry, provenance = load_tracks()
+    for route_index, route in enumerate(geometry['routes']):
+        category, names = route['category'], route['names']
+        line = project(route['coordinates'])
         screen = pixels(line)
-        distances = np.r_[0., np.cumsum(np.linalg.norm(np.diff(line, axis=0), axis=1))]
-        stops = np.r_[0., np.cumsum(np.linalg.norm(np.diff(nodes, axis=0), axis=1))]
-        routes.append({"id": f"illustrative-{route_index}", "points": screen.tolist()})
+        distances = np.asarray(route['distances'])
+        stops = np.asarray(route['stops'])
+        routes.append({'id': f"osm-{route['id']}", 'points': screen.tolist()})
         travel_time = distances[-1] / (speeds[category]/3.6)
         dwell = 240 if category != "local" else 90
-        duration = travel_time + dwell*(len(nodes)-2)
+        duration = travel_time + dwell*(len(stops)-2)
         interval = 2.5*3600 if category == "local" else (4*3600 if category in ("vande", "regional", "shatabdi") else 7*3600)
         for direction in (0, 1):
             route_points = screen if direction == 0 else screen[::-1]
@@ -116,8 +117,9 @@ def build_demo():
                                  "category": category, "route_pixels": route_points.tolist(),
                                  "distances": route_distances.tolist(), "segments": segments})
     return {"version": 1, "date": DAY, "timezone": "Asia/Kolkata", "synthetic_test_only": True,
-            "basis": "Entirely invented journeys, timings and illustrative corridors; not real railway data",
-            "boundary_sha256": boundary_hash(), "journeys": journeys, "display_routes": routes,
+            "basis": "Preview: invented journeys and timings on mapped OSM track geometry; not recorded train observations",
+            "railway_geometry_sha256": provenance["geometry_sha256"],
+            "track_source": "OpenStreetMap", "boundary_sha256": boundary_hash(), "journeys": journeys, "display_routes": routes,
             "coverage": {"selected": len(journeys), "included": len(journeys), "records": [],
                          "warning": "Visual stress test, NOT an estimate of final sample coverage or traffic"},
             "activity": [sum(active_counts(journeys, t).values()) for t in range(0, 86401, 300)]}

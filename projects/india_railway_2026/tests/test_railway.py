@@ -104,6 +104,79 @@ class CacheTests(unittest.TestCase):
         c = self.client(send=lambda *a: (200, {}, b'{"success":true,"data":{"echo":"test-secret"}}'))
         c.get("live", "a", "/one")
         self.assertNotIn("test-secret", (self.store.root / "raw/001.json").read_text())
+    def test_directory_diagnostic_preserves_failure_and_caches_success(self):
+        failed = self.client("completion", send=lambda *a: (400, {}, b'{"error":{"code":"BAD_REQUEST","message":"Invalid request"}}'))
+        failed.get("directory", "trains", "/lookup/trains")
+        original = copy.deepcopy(self.store.manifest["requests"][0])
+        client = self.client("completion")
+        self.assertIsNone(client.get("directory", "trains", "/lookup/trains"))
+        payload = client.get("directory", "trains", "/lookup/trains", retry_directory=True)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(self.store.manifest["requests"]), 2)
+        self.assertEqual(self.store.manifest["requests"][0], original)
+        self.assertEqual(payload, client.get("directory", "trains", "/lookup/trains"))
+        self.assertEqual(len(self.store.manifest["requests"]), 2)
+
+    def test_error_diagnostic_redacts_secrets_and_ignores_other_fields(self):
+        body = json.dumps({"error": {"code": "BAD_REQUEST", "message": "test-secret rr_live_otherSecret Bearer another-secret",
+                                    "headers": {"Authorization": "sensitive-header"}},
+                           "debug": "sensitive-debug"}).encode()
+        self.client(send=lambda *a: (400, {}, body)).get("directory", "trains", "/lookup/trains")
+        saved = self.store.path.read_text(encoding="utf-8")
+        for secret in ("test-secret", "rr_live_otherSecret", "another-secret", "sensitive-header", "sensitive-debug"):
+            self.assertNotIn(secret, saved)
+        self.assertEqual(self.store.manifest["requests"][0]["error"]["code"], "BAD_REQUEST")
+        self.assertFalse((self.store.root / "raw/001.json").exists())
+
+    def test_diagnostic_retry_honors_quota_and_rejects_other_requests(self):
+        self.client("completion", send=lambda *a: (400, {}, b"")).get("directory", "trains", "/lookup/trains")
+        with self.assertRaises(CollectionStopped):
+            self.client("completion", remaining=10).get("directory", "trains", "/lookup/trains", retry_directory=True)
+        self.assertEqual(len(self.store.manifest["requests"]), 1)
+        with self.assertRaises(CollectionStopped):
+            self.client("completion").get("live", "a", "/one", retry_directory=True)
+
+    def test_bad_key_format_stops_before_any_request(self):
+        for key in (" token", "token ", "Bearer token", '"token"', "token\n", "\u00e9token"):
+            with self.subTest(key_format="invalid"), self.assertRaises(CollectionStopped):
+                Client(self.store, "completion", key, send=self.send)
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.manifest["requests"], [])
+
+    def test_empty_and_unexpected_errors_are_explicit(self):
+        from acquire import error_details
+        self.assertIn("Empty", error_details(b"", "secret")["message"])
+        self.assertIn("no recognized", error_details(b'{}', "secret")["message"])
+        self.assertIn("Unexpected", error_details(b'[]', "secret")["message"])
+        self.assertEqual(error_details(b'{"detail":"secret rejected"}', "secret")["detail"], "[REDACTED] rejected")
+
+    def test_transport_sends_only_selected_auth_header(self):
+        from acquire import transport, NoRedirect
+        from unittest.mock import MagicMock
+        for mode in ("bearer", "api-key"):
+            response = MagicMock()
+            response.__enter__.return_value = response
+            response.status, response.headers = 200, {}
+            response.read.return_value = b"{}"
+            opener = MagicMock()
+            opener.open.return_value = response
+            with patch.dict("os.environ", {"RAILRADAR_AUTH_MODE": mode}), patch("acquire.urllib.request.build_opener", return_value=opener) as build:
+                self.assertEqual(transport("https://api.railradar.in/v1/lookup/trains", "test-secret")[0], 200)
+                build.assert_called_once_with(NoRedirect)
+                request = opener.open.call_args.args[0]
+                headers = {k.lower(): v for k, v in request.header_items()}
+                if mode == "api-key":
+                    self.assertEqual(headers["x-api-key"], "test-secret")
+                    self.assertNotIn("authorization", headers)
+                else:
+                    self.assertEqual(headers["authorization"], "Bearer test-secret")
+                    self.assertNotIn("x-api-key", headers)
+
+    def test_invalid_auth_mode_uses_no_quota(self):
+        with patch.dict("os.environ", {"RAILRADAR_AUTH_MODE": "invalid"}), self.assertRaises(CollectionStopped):
+            self.client()
+        self.assertEqual(self.store.manifest["requests"], [])
+
     def test_completion_cutoff(self):
         with self.assertRaisesRegex(CollectionStopped, "not due"):
             run_collection(self.store, "completion", now=END)

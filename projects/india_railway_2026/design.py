@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from geography import official_map, pixels, project
 from model import route_arrays
+from tracks import load_tracks, network_pixels
 from settings import CATEGORIES, HEIGHT, INTRO, REPLAY, ROOT, WIDTH
 
 BACKGROUND, LAND, OUTLINE = "#F7F5EF", "#E6ECE3", "#829787"
@@ -59,11 +60,21 @@ def base_image(dataset=None):
         routes = [r["points"] for r in dataset["display_routes"]]
     else:
         routes = [j["route_pixels"] for j in (dataset or {}).get("journeys", [])]
-    # Contrast against pale land, with a paper-coloured casing to separate crossings.
-    for route in routes:
-        draw.line([tuple(p) for p in route], fill=BACKGROUND, width=7, joint="curve")
-    for route in routes:
-        draw.line([tuple(p) for p in route], fill=TRACK, width=3, joint="curve")
+    mapped = bool((dataset or {}).get('track_source'))
+    if mapped:
+        _, provenance = load_tracks()
+        if dataset['railway_geometry_sha256'] != provenance['geometry_sha256']:
+            raise ValueError('Preview railway asset has changed')
+        # Thin, subdued national network; active demonstration paths stay legible.
+        for route in network_pixels():
+            draw.line([tuple(p) for p in route], fill='#B2BFB5', width=2)
+        for route in routes:
+            draw.line([tuple(p) for p in route], fill='#7B9488', width=3, joint='curve')
+    else:
+        for route in routes:
+            draw.line([tuple(p) for p in route], fill=BACKGROUND, width=7, joint='curve')
+        for route in routes:
+            draw.line([tuple(p) for p in route], fill=TRACK, width=3, joint='curve')
     for name, lon, lat, dx, dy in CITIES:
         x, y = pixels(project([[lon, lat]]))[0]
         draw.ellipse((x-2, y-2, x+2, y+2), fill=MUTED)
@@ -86,14 +97,16 @@ def base_image(dataset=None):
     draw.line((64, 1766, 1016, 1766), fill="#CCD4CA", width=1)
     for hour in (0, 6, 12, 18, 24):
         text(draw, (min(64+952*hour/24, 963), 1775), f"{hour:02d}:00", 18, MUTED)
-    text(draw, (64, 1832), "Invented journeys & routes · Visual preview only · Not real train data" if synthetic else
+    text(draw, (64, 1832), "Simulated journeys & timings · Mapped railway tracks" if synthetic else
          "Representative sample · Recorded timings · Interpolated positions", 22)
-    text(draw, (64, 1870), "Boundary: Survey of India · Noncommercial use only" + (" · No API used" if synthetic else " · Timings: RailRadar"), 19, MUTED)
+    text(draw, (64, 1870), "Boundary: Survey of India · Noncommercial use only" + (" · Traffic simulated" if synthetic else " · Timings: RailRadar"), 19, MUTED)
+    if mapped:
+        text(draw, (64, 1897), "Tracks: © OpenStreetMap contributors · openstreetmap.org/copyright · ODbL", 17, MUTED)
     if synthetic:
         draw.rounded_rectangle((578, 304, 1016, 350), radius=12, fill="#F1E5C9")
-        text(draw, (594, 315), "SYNTHETIC TRAFFIC & ROUTES", 22, "#806019", True)
+        text(draw, (594, 315), "SIMULATED TRAFFIC / OSM TRACKS", 19, "#806019", True)
         draw.line((775, 375, 814, 375), fill=TRACK, width=3)
-        text(draw, (825, 360), "Illustrative track", 21, MUTED)
+        text(draw, (825, 360), "Mapped railway", 21, MUTED)
     if dataset is not None:
         activity = dataset["activity"]
         points = [(64+i*952/(len(activity)-1), 1765-value/(max(activity) or 1)*76) for i, value in enumerate(activity)]
@@ -143,7 +156,7 @@ class FrameRenderer:
         if video_time < INTRO:
             status = f"{len(journeys)} {'invented' if synthetic else 'sampled'} journeys · 00:00–24:00 IST"
         elif video_time < INTRO+REPLAY:
-            status = (f"{sum(counts.values()):02d} simulated trains running · illustrative routes" if synthetic else
+            status = (f"{sum(counts.values()):02d} simulated trains · mapped tracks" if synthetic else
                       f"{sum(counts.values()):02d} sample journeys underway · observed segments only")
         else:
             status = (f"Demo complete · {len(journeys)} invented journeys" if synthetic else
