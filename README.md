@@ -83,10 +83,11 @@ uv run manim checkhealth
 - [Ganesh 2026](projects/ganesh_2026/README.md): a 45-second portrait drawing
   made with one continuous stroke. Includes editable vector artwork, a
   project-specific render configuration, and frame-by-frame verification.
-- [India Railway 2026](projects/india_railway_2026/README.md): a two-pass,
-  offline replay of recorded passenger journeys on 10 October 2026 IST.
-  Includes the official Survey of India outline, cache controls, and a static
-  design proof; actual replay exports require a configured RailRadar key and data.
+- [India Railway 2026](projects/india_railway_2026/README.md): nationwide passenger
+  timetable collection and a scheduled-traffic preview for 15 October 2026 IST,
+  including suburban/local trains. Uses the official Survey of India outline
+  and mapped OSM tracks. Scheduled previews run offline without an API key;
+  the legacy recorded-observation workflow remains separate.
 
 Follow each project's README for its render command. Use its explicit config
 to preserve the intended aspect ratio; for a portrait draft, override only
