@@ -176,11 +176,11 @@ rejects synthetic datasets.
 The new palette uses warm paper, pale sage land, dark labels, visible grey-green
 tracks and richer category colours. Markers and trails are larger for phone
 viewing. Both real rendering and the synthetic preview share this visual style.
-On slower machines, use `--render-only`, then `--verify-only` as separate runs.
-If a runner limits job duration, audit using `--audit-part 0`, `--audit-part 1`,
-and `--audit-part 2`, then `--merge-audits` (add `--draft` for the smaller video).
-The merge checks video/dataset hashes and complete, non-overlapping frame coverage
-before marking the full audit passed.
+Normal exports now use quick verification: encoded metadata plus at most 18
+sampled frames, including phase boundaries and peak activity. For an exhaustive
+1,800-frame audit, run `--verify-only --full` (add `--draft` for the draft video).
+`--render-only` still skips verification. Split audits and `--merge-audits` have
+been removed; `--full` performs the complete audit in one run.
 
 ### Real-data rendering and empty map proof
 
@@ -192,10 +192,13 @@ uv run python projects/india_railway_2026/railway.py proof
 uv run python projects/india_railway_2026/railway.py render --draft
 uv run python projects/india_railway_2026/railway.py render
 uv run python projects/india_railway_2026/railway.py verify
+# Optional exhaustive audit:
+uv run python projects/india_railway_2026/railway.py verify --full
 ```
 
 `render` requires the frozen dataset. It invokes `IndiaRailway2026` with the
-project-local Manim config and automatically exports and audits the result.
+project-local Manim config and automatically exports and quickly audits the result.
+Use `render --full` to request an exhaustive audit immediately after export.
 The frame compositor is rasterized through Manim's Cairo scene; the static
 boundary is rasterized once, while markers/HUD are recomposed per frame. A
 project-local pixel-aligned camera copies the prepared frame without a redundant
@@ -213,10 +216,22 @@ yuv420p. Seconds 0–3 introduce the map; 3–57 advance uniformly through the d
 as context, with its cursor following the clock. Only the moving markers
 represent current observed trains. All eighteen city labels remain fixed.
 
-The audit checks encoded metadata, decodes every frame, compares map/HUD and
-marker patches against the model, and checks the stationary final hold. Pixel
-thresholds allow encoding/resampling error. This cannot certify upstream data
-truth or replace a visual review of route alignment and readable labels.
+Quick verification reads encoded metadata, seeks to selected frames and compares
+map/HUD and marker patches against the model. Seeking may decode surrounding
+keyframe groups; it does not require a complete sequential frame audit. `--full`
+counts decoded frames and compares all 1,800. Both modes check the final hold at
+their audited frames; only full verification checks every hold frame. Reports
+include `mode`, `frames_compared` and `all_frames_compared`, so a successful quick
+check is never presented as a complete frame audit. Pixel thresholds allow
+encoding/resampling error. Neither mode certifies upstream data truth or replaces
+visual review of route alignment and readable labels.
+
+Production and synthetic exports share the same Manim scene helper. Route arrays
+and represented categories live only for the current composition. The activity
+chart is static; only its cursor changes. Introduction and final-hold images are
+cached, and train counts use active intervals without calculating positions.
+Manim's Cairo renderer and CPU encoding are retained; no GPU integration or
+additional application framework is introduced.
 
 ```bash
 uv run python -m unittest discover -s projects/india_railway_2026 -p 'test_*.py' -v

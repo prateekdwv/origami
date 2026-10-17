@@ -1,14 +1,13 @@
 """A visual preview must stay populated, diverse, deterministic and isolated."""
 import json
-import hashlib
 from pathlib import Path
 import tempfile
 import unittest
 import numpy as np
 from demo import build_demo
-from design import base_image, draw_frame
+from design import FrameRenderer, base_image
 from model import active_counts, position
-from replay import load_prepared, merge_audits, validate
+from replay import load_prepared, validate
 from settings import CATEGORIES
 
 class DemoTests(unittest.TestCase):
@@ -41,30 +40,15 @@ class DemoTests(unittest.TestCase):
             (directory / "prepared.json").write_text(json.dumps(self.data))
             with self.assertRaisesRegex(RuntimeError, "Synthetic previews"):
                 load_prepared(directory)
-    def test_audit_merge_requires_matching_complete_parts(self):
-        with tempfile.TemporaryDirectory() as folder:
-            directory = Path(folder)
-            video = directory / "test.mp4"
-            video.write_bytes(b"unit test, not a video")
-            data = {"test": True}
-            report = {"passed": True, "checks": {"requested_frames_compared": True},
-                      "frame_errors": {"max_mean": 0},
-                      "video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
-                      "dataset_sha256": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()}
-            for a, b in ((0, 600), (600, 1200), (1200, 1800)):
-                (directory / f"verification_{a}_{b}.json").write_text(json.dumps(dict(report, frame_range=[a, b])))
-            self.assertTrue(merge_audits(data, video, directory)["checks"]["all_frames_compared"])
-            video.write_bytes(b"changed video")
-            with self.assertRaisesRegex(RuntimeError, "stale audit"):
-                merge_audits(data, video, directory)
     def test_light_map_and_visible_tracks(self):
         bare, busy = base_image(), base_image(self.data)
         self.assertGreater(min(bare.getpixel((0, 0))), 230)
         delta = np.abs(np.asarray(bare, dtype=np.int16)-np.asarray(busy, dtype=np.int16))
         self.assertGreater(np.count_nonzero(delta[450:1350].max(axis=2) > 25), 10000)
         # Two daytime frames must differ visibly, not merely advance a blank clock.
-        one = np.asarray(draw_frame(busy, self.data, 20), dtype=np.int16)
-        two = np.asarray(draw_frame(busy, self.data, 21), dtype=np.int16)
+        compose = FrameRenderer(self.data)
+        one = np.asarray(compose(20), dtype=np.int16)
+        two = np.asarray(compose(21), dtype=np.int16)
         self.assertGreater(np.count_nonzero(np.abs(one-two)[450:1350].max(axis=2) > 25), 5000)
 
 if __name__ == "__main__":

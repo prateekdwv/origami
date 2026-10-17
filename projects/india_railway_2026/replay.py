@@ -2,9 +2,10 @@
 import hashlib
 import json
 import subprocess
+import av
 import numpy as np
 from PIL import Image
-from design import base_image, draw_frame, second_at
+from design import FrameRenderer, second_at
 from geography import boundary_hash, official_map
 from model import active_counts, position
 from settings import DATA, DAY, FPS, HEIGHT, INTRO, MEDIA, OUTRO, REPLAY, WIDTH
@@ -52,25 +53,48 @@ def validate(data):
 
 def export_stills(data, directory=MEDIA):
     directory.mkdir(parents=True, exist_ok=True)
-    base = base_image(data)
+    compose = FrameRenderer(data)
     peak_time = INTRO + int(np.argmax(data["activity"]))*300/86400*REPLAY
-    draw_frame(base, data, peak_time).save(directory / "IndiaRailway_2026_poster.png")
-    draw_frame(base, data, INTRO+REPLAY).save(directory / "IndiaRailway_2026_final.png")
+    compose(peak_time).save(directory / "IndiaRailway_2026_poster.png")
+    compose(INTRO+REPLAY).save(directory / "IndiaRailway_2026_final.png")
     sheet = Image.new("RGB", (1080, 1280))
     for i, t in enumerate((0, 3, 16.5, 30, 43.5, 59)):
-        thumb = draw_frame(base, data, t).resize((360, 640), Image.Resampling.LANCZOS)
+        thumb = compose(t).resize((360, 640), Image.Resampling.LANCZOS)
         sheet.paste(thumb, ((i % 3)*360, (i//3)*640))
     sheet.save(directory / "contact_sheet.png")
 
-def verify(data, video, directory=MEDIA, draft=False, frame_range=None):
-    """Decode every frame; compare clock/count HUD, map, and each marker with the offline model."""
-    start, end = frame_range or (0, 1800)
-    if not 0 <= start < end <= 1800:
-        raise ValueError("Invalid audit frame range")
-    destination = directory / ("verification.json" if frame_range is None else f"verification_{start}_{end}.json")
-    write_json(destination, {"passed": False, "status": "frame audit in progress", "frame_range": [start, end]})
-    result = subprocess.run(["ffprobe", "-v", "error", "-count_frames", "-show_streams", "-show_format",
-                             "-of", "json", str(video)], check=True, capture_output=True, text=True)
+def audit_indices(data, full=False):
+    total = (INTRO+REPLAY+OUTRO)*FPS
+    peak = round((INTRO + int(np.argmax(data["activity"]))*300/86400*REPLAY)*FPS)
+    boundaries = {int(t*FPS)+offset for t in (INTRO, INTRO+REPLAY) for offset in (-1, 0)}
+    return list(range(total)) if full else sorted(set(range(0, total, 150)) | boundaries | {min(total-1, peak), total-1})
+
+
+def decoded_frames(video, indices, full):
+    with av.open(str(video)) as container:
+        stream = container.streams.video[0]
+        if full:
+            for index, frame in enumerate(container.decode(stream)):
+                yield index, frame.to_ndarray(format="rgb24")
+        else:
+            for index in indices:
+                container.seek(int(index/FPS/stream.time_base), stream=stream)
+                frame = next((f for f in container.decode(stream) if round(float(f.time)*FPS) >= index), None)
+                if frame is None or round(float(frame.time)*FPS) != index:
+                    raise RuntimeError(f"Missing video frame {index}")
+                yield index, frame.to_ndarray(format="rgb24")
+
+
+def verify(data, video, directory=MEDIA, draft=False, *, full=False):
+    """Quick sampled audit by default; --full decodes and compares every frame."""
+    indices = audit_indices(data, full)
+    destination = directory / "verification.json"
+    report = {"passed": False, "mode": "full" if full else "quick", "frames_compared": 0,
+              "all_frames_compared": False, "status": "audit in progress"}
+    write_json(destination, report)
+    result = subprocess.run(["ffprobe", "-v", "error", *(["-count_frames"] if full else []),
+                             "-show_streams", "-show_format", "-of", "json", str(video)],
+                            check=True, capture_output=True, text=True)
     info = json.loads(result.stdout)
     streams = info["streams"]
     videos = [s for s in streams if s["codec_type"] == "video"]
@@ -81,30 +105,30 @@ def verify(data, video, directory=MEDIA, draft=False, frame_range=None):
         "dimensions": (stream.get("width"), stream.get("height")) == (width, height),
         "h264_yuv420p": stream.get("codec_name") == "h264" and stream.get("pix_fmt") == "yuv420p",
         "30fps": stream.get("avg_frame_rate") == "30/1",
-        "1800_frames": stream.get("nb_read_frames") == "1800",
+        "1800_frames": stream.get("nb_read_frames" if full else "nb_frames") == "1800",
         "60_seconds": abs(float(info["format"]["duration"])-60) < .02,
         "clock_endpoints": second_at(3) == 0 and second_at(57) == 86400,
     }
-    report = {"checks": checks, "video": str(video), "coverage": data["coverage"],
-              "synthetic_test_only": bool(data.get("synthetic_test_only")),
-              "frame_range": [start, end], "video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
-              "dataset_sha256": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
-              "boundary_sha256": boundary_hash(), "boundary_rings": len(official_map()[2]),
-              "review_required": "Visual cartographic/label review and upstream accuracy cannot be certified by pixel checks."}
+    with video.open("rb") as source:
+        video_hash = hashlib.file_digest(source, "sha256").hexdigest()
+    report.update({"checks": checks, "video": str(video), "coverage": data["coverage"],
+                   "synthetic_test_only": bool(data.get("synthetic_test_only")),
+                   "sample_indices": indices, "video_sha256": video_hash,
+                   "dataset_sha256": hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest(),
+                   "boundary_sha256": boundary_hash(), "boundary_rings": len(official_map()[2]),
+                   "review_required": "Pixel checks cannot certify upstream data or replace visual review."})
     if not all(checks.values()):
+        report["status"] = "failed"
         write_json(destination, report)
         raise RuntimeError("Encoded video metadata failed verification")
-    base = base_image(data)
-    process = subprocess.Popen(["ffmpeg", "-v", "error", "-ss", str(start/FPS), "-i", str(video),
-                                "-frames:v", str(end-start), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
+    compose = FrameRenderer(data)
     max_error, max_hud, max_marker, frames, last_hold, hold_error = 0., 0., 0., 0, None, 0.
+    decoded = decoded_frames(video, indices, full)
     try:
-        for index in range(start, end):
-            raw = process.stdout.read(width*height*3)
-            if len(raw) != width*height*3:
-                raise RuntimeError("Truncated video during frame audit")
-            actual = np.frombuffer(raw, np.uint8).reshape(height, width, 3)
-            expected = draw_frame(base, data, index/FPS)
+        for index, actual in decoded:
+            if frames >= len(indices) or index != indices[frames] or actual.shape != (height, width, 3):
+                raise RuntimeError("Unexpected video frame count or dimensions")
+            expected = compose(index/FPS)
             if draft:
                 expected = expected.resize((width, height), Image.Resampling.LANCZOS)
             # Signed 16-bit differences avoid allocating multiple 50 MB float frames.
@@ -113,8 +137,8 @@ def verify(data, video, directory=MEDIA, draft=False, frame_range=None):
             max_error = max(max_error, float(delta.mean()))
             max_hud = max(max_hud, float(delta[int(175*scale):int(255*scale)].mean()))
             if INTRO <= index/FPS < INTRO+REPLAY:
-                for journey in data["journeys"]:
-                    point = position(journey, second_at(index/FPS))
+                for journey, points, distances in compose.routes:
+                    point = position(journey, second_at(index/FPS), (points, distances))
                     if point is not None:
                         x, y = (point*scale).astype(int)
                         radius = max(2, int(5*scale))
@@ -127,36 +151,16 @@ def verify(data, video, directory=MEDIA, draft=False, frame_range=None):
                 last_hold = actual.copy()
             frames += 1
     finally:
-        process.stdout.close()
-        process.wait()
-    checks.update({"requested_frames_compared": frames == end-start and process.returncode == 0,
+        decoded.close()
+    checks.update({"requested_frames_compared": frames == len(indices),
                    "pixel_comparison": max_error < 4 and max_hud < 6 and max_marker < 55,
                    "stationary_final_hold": hold_error < 1})
     report["frame_errors"] = {"max_mean": max_error, "max_hud_mean": max_hud,
                               "max_marker_mean": max_marker, "hold_mean": hold_error}
     report["passed"] = all(checks.values())
-    if frame_range is None:
-        checks["all_frames_compared"] = frames == 1800
+    report["status"] = "passed" if report["passed"] else "failed"
+    report.update({"frames_compared": frames, "all_frames_compared": full and frames == 1800})
     write_json(destination, report)
     if not report["passed"]:
         raise RuntimeError("Frame audit failed; see verification.json")
     return report
-
-
-def merge_audits(data, video, directory):
-    """Only certify the whole video when three matching, contiguous audits passed."""
-    ranges = [(0, 600), (600, 1200), (1200, 1800)]
-    reports = [json.loads((directory / f"verification_{a}_{b}.json").read_text(encoding="utf-8")) for a, b in ranges]
-    video_hash = hashlib.sha256(video.read_bytes()).hexdigest()
-    data_hash = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
-    for report, interval in zip(reports, ranges):
-        if not (report.get("passed") and report["frame_range"] == list(interval)
-                and report["video_sha256"] == video_hash and report["dataset_sha256"] == data_hash):
-            raise RuntimeError("Missing, failed, or stale audit part; cannot certify all frames")
-    merged = dict(reports[0])
-    merged["checks"] = {key: all(r["checks"][key] for r in reports) for key in reports[0]["checks"]}
-    merged["checks"]["all_frames_compared"] = True
-    merged["frame_range"] = [0, 1800]
-    merged["frame_errors"] = {key: max(r["frame_errors"][key] for r in reports) for key in reports[0]["frame_errors"]}
-    write_json(directory / "verification.json", merged)
-    return merged

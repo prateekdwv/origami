@@ -9,18 +9,8 @@ from geography import boundary_hash, pixels, project
 from settings import CATEGORIES, DAY, END, START, classify, timestamp
 from store import write_json
 
-_ROUTE_ARRAYS = {}
-
 def route_arrays(journey):
-    """Bounded runtime cache; never add NumPy data to the frozen JSON object."""
-    key = id(journey)
-    cached = _ROUTE_ARRAYS.get(key)
-    if cached is None or cached[0] is not journey:
-        if len(_ROUTE_ARRAYS) >= 1024:
-            _ROUTE_ARRAYS.pop(next(iter(_ROUTE_ARRAYS)))
-        cached = (journey, np.asarray(journey["route_pixels"]), np.asarray(journey["distances"]))
-        _ROUTE_ARRAYS[key] = cached
-    return cached[1:]
+    return np.asarray(journey["route_pixels"]), np.asarray(journey["distances"])
 
 
 def merge_observations(responses, item):
@@ -174,12 +164,12 @@ def prepare_journey(journey, route_payload):
             "route_pixels": pixels(line).tolist(), "distances": cumulative.tolist(), "segments": segments}, issues
 
 
-def position(journey, second):
+def position(journey, second, arrays=None):
     for segment in journey["segments"]:
         if segment["start"] <= second < segment["end"]:
             alpha = (second-segment["start"])/(segment["end"]-segment["start"])
             distance = segment["from"] + alpha*(segment["to"]-segment["from"])
-            points, distances = route_arrays(journey)
+            points, distances = arrays if arrays is not None else route_arrays(journey)
             return np.array([np.interp(distance, distances, points[:, axis]) for axis in (0, 1)])
     return None
 
@@ -187,7 +177,7 @@ def position(journey, second):
 def active_counts(journeys, second):
     counts = dict.fromkeys(CATEGORIES, 0)
     for journey in journeys:
-        if position(journey, second) is not None:
+        if any(s["start"] <= second < s["end"] for s in journey["segments"]):
             counts[journey["category"]] += 1
     return counts
 

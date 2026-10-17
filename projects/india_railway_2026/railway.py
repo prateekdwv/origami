@@ -1,10 +1,8 @@
 """Run from the repository root; every operation is explicit, with no background polling."""
 import argparse
 import json
-import os
-import subprocess
 import sys
-from settings import DATA, MEDIA, REPO, ROOT
+from settings import DATA, MEDIA
 from store import Store, write_json
 
 def main():
@@ -17,7 +15,9 @@ def main():
     for name in ("status", "prepare", "proof"):
         commands.add_parser(name)
     for name in ("render", "verify"):
-        commands.add_parser(name).add_argument("--draft", action="store_true")
+        command = commands.add_parser(name)
+        command.add_argument("--draft", action="store_true")
+        command.add_argument("--full", action="store_true", help="Audit every frame instead of a quick sample")
     args = parser.parse_args()
     if args.command == "collect":
         from acquire import collect_pass
@@ -45,10 +45,10 @@ def main():
                 data = prepare(store)
             print(f"Frozen {len(data['journeys'])} usable journeys. Coverage: {DATA / 'coverage.json'}")
         elif args.command == "proof":
-            from design import base_image, draw_frame
+            from design import FrameRenderer
             from geography import boundary_hash, official_map
             MEDIA.mkdir(parents=True, exist_ok=True)
-            draw_frame(base_image(), None, proof=True).save(MEDIA / "design_proof.png")
+            FrameRenderer()().save(MEDIA / "design_proof.png")
             write_json(MEDIA / "design_proof.json", {"status": "awaiting actual observations; not a factual replay",
                        "boundary_sha256": boundary_hash(), "rings": len(official_map()[2]), "simplified": False})
             print(MEDIA / "design_proof.png")
@@ -59,17 +59,11 @@ def main():
             directory.mkdir(parents=True, exist_ok=True)
             video = directory / "IndiaRailway_2026.mp4"
             if args.command == "render":
-                # Manim scene independently disables networking in this child process.
-                command = [sys.executable, "-m", "manim", "--config_file", str(ROOT / "manim.cfg"),
-                           "--media_dir", str(directory), "-o", "IndiaRailway_2026", str(ROOT / "scene.py"), "IndiaRailway2026"]
-                if args.draft:
-                    command.extend(["-r", "360,640"])
-                environment = dict(os.environ)
-                environment.pop("RAILRADAR_API_KEY", None)
-                subprocess.run(command, cwd=REPO, env=environment, check=True)
+                from scene import render_video
+                render_video(data, directory, args.draft)
                 export_stills(data, directory)
-            verify(data, video, directory, args.draft)
-            print(f"Verified 1,800 frames: {video}")
+            report = verify(data, video, directory, args.draft, full=args.full)
+            print(f"{report['mode']} verification: {report['frames_compared']} frames compared: {video}")
 
 if __name__ == "__main__":
     try:

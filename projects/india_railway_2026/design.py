@@ -4,7 +4,7 @@ import cairo
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from geography import official_map, pixels, project
-from model import active_counts, position, route_arrays
+from model import route_arrays
 from settings import CATEGORIES, HEIGHT, INTRO, REPLAY, ROOT, WIDTH
 
 BACKGROUND, LAND, OUTLINE = "#F7F5EF", "#E6ECE3", "#829787"
@@ -94,61 +94,78 @@ def base_image(dataset=None):
         text(draw, (594, 315), "SYNTHETIC TRAFFIC & ROUTES", 22, "#806019", True)
         draw.line((775, 375, 814, 375), fill=TRACK, width=3)
         text(draw, (825, 360), "Illustrative track", 21, MUTED)
+    if dataset is not None:
+        activity = dataset["activity"]
+        points = [(64+i*952/(len(activity)-1), 1765-value/(max(activity) or 1)*76) for i, value in enumerate(activity)]
+        draw.polygon([(64, 1765), *points, (1016, 1765)], fill="#CFDDD3")
+        draw.line(points, fill="#658775", width=2)
+        text(draw, (785, 1638), f"peak shown: {max(activity)}", 19, MUTED)
     return image
 
 def second_at(video_time):
     return min(86400, max(0, (video_time-INTRO)/REPLAY*86400))
 
-def draw_frame(base, dataset, video_time=0, proof=False):
-    image = base.copy()
-    draw = ImageDraw.Draw(image)
-    second = second_at(video_time)
-    if proof:
-        text(draw, (64, 217), "DESIGN PROOF — AWAITING OBSERVATIONS", 23, "#806019")
-        text(draw, (720, 180), "00:00", 50)
+class FrameRenderer:
+    """One composition per export, with prepared routes and cached static holds."""
+    def __init__(self, dataset=None):
+        self.base, self.dataset = base_image(dataset), dataset
+        self.routes = [(j, *route_arrays(j)) for j in (dataset or {}).get("journeys", [])]
+        self.represented = {j["category"] for j, _, _ in self.routes}
+        self.holds = {}
+
+    def __call__(self, video_time=0):
+        hold = 0 if video_time < INTRO else INTRO+REPLAY if video_time >= INTRO+REPLAY else None
+        if hold is None:
+            return self.draw(video_time)
+        if hold not in self.holds:
+            self.holds[hold] = self.draw(hold)
+        return self.holds[hold]
+
+    def draw(self, video_time):
+        image = self.base.copy()
+        dataset = self.dataset
+        draw = ImageDraw.Draw(image)
+        second = second_at(video_time)
+        if dataset is None:
+            text(draw, (64, 217), "DESIGN PROOF — AWAITING OBSERVATIONS", 23, "#806019")
+            text(draw, (720, 180), "00:00", 50)
+            return image
+        journeys = dataset["journeys"]
+        synthetic = dataset.get("synthetic_test_only", False)
+        active = [(j, p, d, s) for j, p, d in self.routes
+                  if (s := next((s for s in j["segments"] if s["start"] <= second < s["end"]), None)) is not None]
+        counts = dict.fromkeys(CATEGORIES, 0)
+        for journey, _, _, _ in active:
+            counts[journey["category"]] += 1
+        minute = min(1440, int(second//60))
+        text(draw, (752, 177), f"{minute//60:02d}:{minute%60:02d}", 54, bold=True)
+        text(draw, (960, 199), "IST", 21, MUTED)
+        if video_time < INTRO:
+            status = f"{len(journeys)} {'invented' if synthetic else 'sampled'} journeys · 00:00–24:00 IST"
+        elif video_time < INTRO+REPLAY:
+            status = (f"{sum(counts.values()):02d} simulated trains running · illustrative routes" if synthetic else
+                      f"{sum(counts.values()):02d} sample journeys underway · observed segments only")
+        else:
+            status = (f"Demo complete · {len(journeys)} invented journeys" if synthetic else
+                      f"Day complete · {len(journeys)} usable / {dataset['coverage']['selected']} selected journeys")
+        text(draw, (64, 219), status, 23, MUTED)
+        if INTRO <= video_time < INTRO+REPLAY:
+            for journey, points, distances, segment in active:
+                color = CATEGORIES[journey["category"]][1]
+                def along(t):
+                    return segment["from"]+(segment["to"]-segment["from"])*(t-segment["start"])/(segment["end"]-segment["start"])
+                a, b = along(max(segment["start"], second-420)), along(second)
+                point = [np.interp(b, distances, points[:, axis]) for axis in (0, 1)]
+                start = [np.interp(a, distances, points[:, axis]) for axis in (0, 1)]
+                inside = points[np.searchsorted(distances, a, side="right"):np.searchsorted(distances, b)]
+                draw.line([tuple(start), *[tuple(p) for p in inside], tuple(point)], fill=color, width=4)
+                x, y = point
+                halo = tuple(round(255*(v*.18+b*.82)) for v, b in zip(rgb(color), rgb(BACKGROUND)))
+                draw.ellipse((x-10, y-10, x+10, y+10), fill=halo)
+                draw.ellipse((x-6, y-6, x+6, y+6), fill=color, outline="#FFFFFF", width=1)
+            for i, category in enumerate(CATEGORIES):
+                if category in self.represented:
+                    text(draw, (490+(i % 2)*490, 1450+(i//2)*58), f"{counts[category]:02d}", 24, CATEGORIES[category][1], True)
+        cursor = 64+second/86400*952
+        draw.line((cursor, 1681, cursor, 1766), fill="#B77909", width=3)
         return image
-    journeys = dataset["journeys"]
-    synthetic = dataset.get("synthetic_test_only", False)
-    counts = active_counts(journeys, second) if video_time >= INTRO else dict.fromkeys(CATEGORIES, 0)
-    minute = min(1440, int(second//60))
-    text(draw, (752, 177), f"{minute//60:02d}:{minute%60:02d}", 54, bold=True)
-    text(draw, (960, 199), "IST", 21, MUTED)
-    if video_time < INTRO:
-        status = f"{len(journeys)} {'invented' if synthetic else 'sampled'} journeys · 00:00–24:00 IST"
-    elif video_time < INTRO+REPLAY:
-        status = (f"{sum(counts.values()):02d} simulated trains running · illustrative routes" if synthetic else
-                  f"{sum(counts.values()):02d} sample journeys underway · observed segments only")
-    else:
-        status = (f"Demo complete · {len(journeys)} invented journeys" if synthetic else
-                  f"Day complete · {len(journeys)} usable / {dataset['coverage']['selected']} selected journeys")
-    text(draw, (64, 219), status, 23, MUTED)
-    if INTRO <= video_time < INTRO+REPLAY:
-        for journey in journeys:
-            point = position(journey, second)
-            if point is None:
-                continue
-            color = CATEGORIES[journey["category"]][1]
-            segment = next(s for s in journey["segments"] if s["start"] <= second < s["end"])
-            points, distances = route_arrays(journey)
-            def along(t):
-                return segment["from"]+(segment["to"]-segment["from"])*(t-segment["start"])/(segment["end"]-segment["start"])
-            a, b = along(max(segment["start"], second-420)), along(second)
-            start = [np.interp(a, distances, points[:, axis]) for axis in (0, 1)]
-            inside = points[np.searchsorted(distances, a, side="right"):np.searchsorted(distances, b)]
-            draw.line([tuple(start), *[tuple(p) for p in inside], tuple(point)], fill=color, width=4)
-            x, y = point
-            halo = tuple(round(255*(v*.18+b*.82)) for v, b in zip(rgb(color), rgb(BACKGROUND)))
-            draw.ellipse((x-10, y-10, x+10, y+10), fill=halo)
-            draw.ellipse((x-6, y-6, x+6, y+6), fill=color, outline="#FFFFFF", width=1)
-        for i, category in enumerate(CATEGORIES):
-            if category in {j["category"] for j in journeys}:
-                text(draw, (490+(i % 2)*490, 1450+(i//2)*58), f"{counts[category]:02d}", 24, CATEGORIES[category][1], True)
-    activity = dataset["activity"]
-    peak = max(activity) or 1
-    points = [(64+i*952/(len(activity)-1), 1765-value/peak*76) for i, value in enumerate(activity)]
-    draw.polygon([(64, 1765), *points, (1016, 1765)], fill="#CFDDD3")
-    draw.line(points, fill="#658775", width=2)
-    cursor = 64+second/86400*952
-    draw.line((cursor, 1681, cursor, 1766), fill="#B77909", width=3)
-    text(draw, (785, 1638), f"peak shown: {max(activity)}", 19, MUTED)
-    return image
