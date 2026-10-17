@@ -205,7 +205,7 @@ def prepare(store):
         wrappers = []
         for record in records:
             path = store.root / record["file"]
-            wrappers.append(json.loads(path.read_text()))
+            wrappers.append(json.loads(path.read_text(encoding="utf-8")))
             sources.append({"file": record["file"], "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
         journey, issues = merge_observations(wrappers, item)
         geometry = store.successful("geometry", item["number"])

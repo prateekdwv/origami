@@ -23,19 +23,72 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None  # Never forward the authorization header to another origin.
 
 
+def auth_mode():
+    mode = os.environ.get("RAILRADAR_AUTH_MODE", "bearer")
+    if mode not in ("bearer", "api-key"):
+        raise CollectionStopped("RAILRADAR_AUTH_MODE must be bearer or api-key; no API requests made")
+    return mode
+
+
 def transport(url, key):
-    request = urllib.request.Request(url, headers={"Authorization": "Bearer " + key, "Accept": "application/json"})
+    headers = {"Accept": "application/json"}
+    if auth_mode() == "api-key":
+        headers["X-API-Key"] = key
+    else:
+        headers["Authorization"] = "Bearer " + key
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.build_opener(NoRedirect).open(request, timeout=35) as response:
             return response.status, response.headers, response.read()
     except urllib.error.HTTPError as error:
-        return error.code, error.headers, b""  # Do not persist echoed headers or error text.
+        return error.code, error.headers, error.read(16384)  # Only allowlisted, redacted JSON diagnostics are persisted.
+
+
+def key_issues(key):
+    """Validate copy/paste mistakes without exposing any credential characters."""
+    issues = []
+    if not key:
+        return ["RAILRADAR_API_KEY is not configured in this terminal"]
+    if any(char.isspace() for char in key):
+        issues.append("Key contains whitespace; enter only the raw key")
+    if key.lower().startswith("bearer "):
+        issues.append("Remove the Bearer prefix; the collector adds it")
+    if key.startswith((chr(34), chr(39))) or key.endswith((chr(34), chr(39))):
+        issues.append("Remove surrounding quotation marks from the key")
+    if not key.isascii():
+        issues.append("Key contains non-ASCII characters; copy the raw dashboard key again")
+    return issues
+
+
+def error_details(body, key):
+    """Keep only bounded public error fields; never save headers or raw error bodies."""
+    if not body:
+        return {"message": "Empty HTTP error response body"}
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeError):
+        return {"message": "Non-JSON error response; raw body was not saved"} if body else {}
+    if not isinstance(payload, dict):
+        return {"message": "Unexpected JSON error format: " + type(payload).__name__}
+    error = payload.get("error", {})
+    if not isinstance(error, dict):
+        error = {"message": error} if isinstance(error, str) else {}
+    details = {}
+    for field in ("code", "message", "detail", "title", "reason", "description"):
+        value = error.get(field, payload.get(field))
+        if isinstance(value, str):
+            value = value.replace(key, "[REDACTED]") if key else value
+            value = re.sub(r"rr_[A-Za-z0-9_-]+", "[REDACTED]", value)
+            value = re.sub(r"(?i)Bearer\s+\S+", "Bearer [REDACTED]", value)
+            details[field] = " ".join(value.split())[:500]
+    return details or {"message": "JSON error response has no recognized diagnostic fields"}
 
 
 class Client:
     def __init__(self, store, phase, key, remaining=None, send=transport, clock=time.time, sleep=time.sleep):
-        if not key:
-            raise CollectionStopped("RAILRADAR_API_KEY is not configured; no API requests made")
+        self.auth_mode = auth_mode()
+        if issues := key_issues(key):
+            raise CollectionStopped("; ".join(issues) + "; no API requests made")
         if store.manifest.get("halt"):
             raise CollectionStopped("Account access/quota halted collection. Resolve the saved halt before any further requests")
         self.store, self.phase, self.key = store, phase, key
@@ -46,13 +99,17 @@ class Client:
                 raise ValueError("Remaining quota must be nonnegative")
             store.manifest["budget_total"] = min(store.manifest["budget_total"], used + max(0, remaining-10), 90)
 
-    def get(self, kind, identity, path, params=None, refresh=False):
+    def get(self, kind, identity, path, params=None, refresh=False, retry_directory=False):
         records = self.store.manifest["requests"]
         cached = self.store.successful(kind, identity)
         if cached and (not refresh or cached[-1]["phase"] == self.phase):
             return self.store.response(cached[-1])
-        if any(r["kind"] == kind and r["identity"] == identity and r["phase"] == self.phase for r in records):
-            return None  # Failed/inflight attempts are not repeated within a pass.
+        previous = [r for r in records if r["kind"] == kind and r["identity"] == identity and r["phase"] == self.phase]
+        if retry_directory and not (kind == "directory" and identity == "trains" and path == "/lookup/trains"
+                                    and not params and previous and previous[-1]["status"] == "http_failed"):
+            raise CollectionStopped("Diagnostic retry requires a previous directory HTTP failure")
+        if previous and not retry_directory:
+            return None  # Failed/inflight attempts are not automatically repeated within a pass.
         limit = {"initial": 40, "completion": 50}[self.phase]
         if sum(r["phase"] == self.phase for r in records) >= limit or len(records) >= self.store.manifest["budget_total"]:
             raise BudgetReached("Request budget reached; pending records are saved for inspection")
@@ -61,7 +118,7 @@ class Client:
         params = params or {}
         number = len(records) + 1
         record = {"kind": kind, "identity": identity, "phase": self.phase, "path": path,
-                  "params": params, "epoch": self.clock(), "status": "inflight",
+                  "params": params, "epoch": self.clock(), "status": "inflight", "auth_mode": self.auth_mode,
                   "file": f"raw/{number:03d}.json"}
         records.append(record)
         self.store.save()  # Count the attempt BEFORE the request, including uncertain crashes.
@@ -75,6 +132,9 @@ class Client:
             allowance = headers.get("X-Monthly-RateLimit-Remaining")
             if allowance is not None and str(allowance).isdigit():
                 self.store.manifest["budget_total"] = min(self.store.manifest["budget_total"], len(records) + max(0, int(allowance)-10))
+            if status != 200:
+                record["error"] = error_details(body, self.key)
+                record["response_bytes"] = len(body)
             if status in (401, 403, 429):
                 record["status"] = "auth_failed" if status != 429 else "rate_limited"
                 self.store.manifest["halt"] = record["status"]

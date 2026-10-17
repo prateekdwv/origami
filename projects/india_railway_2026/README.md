@@ -11,6 +11,7 @@ geometry; positions between those events are interpolated.
 - `acquire.py`, `store.py`: bounded HTTP acquisition and atomic, resumable cache.
 - `model.py`: observation merging, station-to-track matching and movement intervals.
 - `geography.py`, `assets/soi/`: official boundary, native projection and provenance.
+- `fetch_tracks.py`, `prepare_tracks.py`, `tracks.py`, `assets/railways/`: attributed mapped track geometry.
 - `design.py`, `scene.py`, `manim.cfg`: deterministic portrait composition and Manim scene.
 - `replay.py`, `offline.py`: integrity checks, export audit and network denial.
 - `test_railway.py`, `test_render.py`: isolated synthetic tests, never production observations.
@@ -22,6 +23,9 @@ geometry; positions between those events are interpolated.
 From the repository root, run `uv sync --locked`. The shared environment adds
 PyShp for the official shapefile and PyProj for its geographic projection.
 FFmpeg, Cairo and fonts are provided by the repository's system setup script.
+The renderer also bundles Lato Regular/Bold in `assets/fonts/` under the included
+SIL Open Font License, so typography works on Windows. Windows installs include
+`tzdata` for the IST timezone; FFmpeg and FFprobe must be on `PATH`.
 
 Create a free RailRadar account and configure `RAILRADAR_API_KEY` in the shell
 or your workspace's secret manager. Do not paste the key into source, chat,
@@ -84,6 +88,29 @@ review the manifest before deliberately clearing that halt. Do not delete the
 cache to reset budgets. A failed history gate stops acquisition entirely for
 manual review; it does not switch to schedules.
 
+### Diagnosing a directory HTTP failure
+
+If the first directory request failed with an HTTP error, normal collection will
+not repeat it. To explicitly make one diagnostic retry, preserving the failed
+record and counting the new request against the same limits:
+
+```bash
+# Supply the current remaining allowance from your dashboard.
+uv run python projects/india_railway_2026/railway.py diagnose-directory --remaining-quota 99
+```
+
+Bearer authentication is the default. To explicitly test RailRadar's documented
+alternative authentication in PowerShell, set `$env:RAILRADAR_AUTH_MODE = "api-key"`
+before the diagnostic command. The same setting applies to later collection in
+that terminal. No automatic authentication fallback or extra request is made;
+the selected mode is recorded without the key.
+
+This prints the HTTP status and bounded, redacted JSON error code/message. It
+never prints authorization headers or saves raw error bodies. Successful
+responses are cached for the next normal collection command. It does not clear
+account halts, reset budgets, or retry train probes. An earlier error message
+that was discarded cannot be recovered without a new request.
+
 ## Preparation and movement semantics
 
 Only timezone-aware `actualArrival` and `actualDeparture` events are eligible.
@@ -140,18 +167,39 @@ uv run python projects/india_railway_2026/test_render.py --draft --stills-only
 Open `media/india_railway_2026/synthetic_test/draft/SYNTHETIC_TEST.mp4`
 (or `full/SYNTHETIC_TEST.mp4`). Each directory also contains
 `IndiaRailway_2026_poster.png`, `contact_sheet.png` and `preview_dataset.json`.
-The default demo is now a geographically spread, busy day across 31 illustrative
-corridors, with all six categories, overnight traffic, daytime service variation,
-opposite-direction movement and station stops. It replaces the old one-journey
-smoke-test fixture, which was empty for most of the replay.
+The demo uses a national OpenStreetMap railway layer fetched from Esri India's
+public OSM Railway Network service: 97,900 source features, split into 97,944
+line parts. These are geographic track coordinates, projected through the same
+native Lambert Conformal Conic transform as the SOI boundary. The source does
+not supply its snapshot date, so October 2026 completeness is not asserted.
 
-**Every demo journey, timing and connecting route is invented.** These are
-approximate city-to-city corridors, not verified railway track geometry. The
-official boundary is unchanged. The video and its counters explicitly identify
-synthetic traffic; they do not claim recorded timings or RailRadar attribution.
-This is a visual stress test, not a prediction of the real 24-journey sample's
-density. Nothing is written to `data/`, no API is used, and the production loader
-rejects synthetic datasets.
+The full network appears as subdued background lines. Simulated services follow
+108 mapped city-pair paths across all six categories. Paths use connected track
+vertices, rounded to about one metre to reunite administrative splits. No larger
+network gaps are bridged. Approximate city anchors snap within 15 km; unavailable
+connections or excessive detours are omitted. Display paths are simplified to
+150 metres (well below one pixel at this map scale), retaining track distances.
+These shortest paths are demonstration itineraries, not verified named-train routes.
+
+**Journey identities, timings and stops remain invented.** The map labels this
+as simulated traffic on mapped tracks. It is a visual stress test, not a traffic
+census, timetable, or replay of recorded observations. Nothing is written to
+`data/`, no RailRadar API is used, and the production loader rejects demo datasets.
+
+`assets/railways/` contains the compressed source GeoJSON, derived geometry,
+source/hash/method provenance and the ODbL license. Exports credit OpenStreetMap
+contributors. The railway database is under ODbL; the existing SOI boundary
+notice still applies. Rendering uses only these frozen local files.
+
+To explicitly refresh geometry (network access is confined to the fetch command):
+
+```bash
+uv run python projects/india_railway_2026/fetch_tracks.py
+uv run python projects/india_railway_2026/prepare_tracks.py media/india_railway_2026/tooling/railways.geojson
+```
+
+Review the resulting provenance, omitted paths, national extent, and stills before
+rendering. Geometry hashes are checked during rendering and frame verification.
 
 The new palette uses warm paper, pale sage land, dark labels, visible grey-green
 tracks and richer category colours. Markers and trails are larger for phone

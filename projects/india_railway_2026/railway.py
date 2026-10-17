@@ -14,12 +14,43 @@ def main():
     collect.add_argument("phase", choices=("initial", "completion"))
     collect.add_argument("--remaining-quota", type=int, required=True,
                          help="Current remaining monthly account allowance, checked in your dashboard")
-    for name in ("status", "prepare", "proof"):
+    diagnostic = commands.add_parser("diagnose-directory", help="Explicitly retry one failed directory HTTP request; preserves quota accounting")
+    diagnostic.add_argument("--remaining-quota", type=int, required=True)
+    for name in ("status", "prepare", "proof", "doctor"):
         commands.add_parser(name)
     for name in ("render", "verify"):
         commands.add_parser(name).add_argument("--draft", action="store_true")
     args = parser.parse_args()
-    if args.command == "collect":
+    if args.command == "doctor":
+        from acquire import key_issues, auth_mode
+        key = os.environ.get("RAILRADAR_API_KEY", "")
+        issues = key_issues(key)
+        print(json.dumps({"python": sys.version.split()[0], "executable": sys.executable,
+                          "key_present": bool(key), "key_format_issues": issues, "auth_mode": auth_mode(),
+                          "network_requests_made": 0,
+                          "note": "This checks local configuration, not whether RailRadar accepts the key"}, indent=2))
+    elif args.command == "diagnose-directory":
+        from acquire import Client, CollectionStopped
+        with Store(DATA).locked() as store:
+            if store.manifest.get("frozen_sha256") or (DATA / "prepared.json").exists():
+                raise CollectionStopped("Dataset is frozen")
+            if store.manifest.get("gate") == "failed":
+                raise CollectionStopped("History feasibility failed; review the cache before further requests")
+            records = [r for r in store.manifest["requests"] if r["kind"] == "directory" and r["identity"] == "trains"]
+            if not records or records[-1]["status"] != "http_failed":
+                raise CollectionStopped("No directory HTTP failure to diagnose")
+            phase = records[-1]["phase"]
+            if store.manifest["passes"].get(phase) == "finished":
+                raise CollectionStopped("The collection pass is already finished")
+            client = Client(store, phase, os.environ.get("RAILRADAR_API_KEY", ""), args.remaining_quota)
+            try:
+                payload = client.get("directory", "trains", "/lookup/trains", retry_directory=True)
+            finally:
+                last = store.manifest["requests"][-1]
+                print(json.dumps({k: last[k] for k in ("path", "status", "http_status", "auth_mode", "response_bytes", "error") if k in last}, indent=2))
+            if payload is not None:
+                print("Directory response cached. Resume the original collect command to validate and select trains.")
+    elif args.command == "collect":
         from acquire import collect_pass
         with Store(DATA).locked() as store:
             collect_pass(store, args.phase, args.remaining_quota)

@@ -14,10 +14,10 @@ def load_prepared(directory=DATA):
     path = directory / "prepared.json"
     if not path.exists():
         raise RuntimeError("No frozen dataset. Collect both passes, then run prepare; no synthetic fallback is allowed")
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("synthetic_test_only"):
         raise RuntimeError("Synthetic previews cannot be loaded as a production replay")
-    manifest = json.loads((directory / "manifest.json").read_text())
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
     if hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("frozen_sha256"):
         raise RuntimeError("Frozen dataset integrity check failed")
     if data["date"] != DAY or data["boundary_sha256"] != boundary_hash():
@@ -146,7 +146,7 @@ def verify(data, video, directory=MEDIA, draft=False, frame_range=None):
 def merge_audits(data, video, directory):
     """Only certify the whole video when three matching, contiguous audits passed."""
     ranges = [(0, 600), (600, 1200), (1200, 1800)]
-    reports = [json.loads((directory / f"verification_{a}_{b}.json").read_text()) for a, b in ranges]
+    reports = [json.loads((directory / f"verification_{a}_{b}.json").read_text(encoding="utf-8")) for a, b in ranges]
     video_hash = hashlib.sha256(video.read_bytes()).hexdigest()
     data_hash = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
     for report, interval in zip(reports, ranges):
