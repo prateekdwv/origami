@@ -1,12 +1,11 @@
 """Offline composition; a single deterministic frame function drives Manim and audits."""
 from functools import lru_cache
-from pathlib import Path
 import cairo
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from geography import official_map, pixels, project
 from model import active_counts, position, route_arrays
-from settings import CATEGORIES, HEIGHT, INTRO, REPLAY, WIDTH
+from settings import CATEGORIES, HEIGHT, INTRO, REPLAY, ROOT, WIDTH
 
 BACKGROUND, LAND, OUTLINE = "#F7F5EF", "#E6ECE3", "#829787"
 INK, MUTED = "#243A3D", "#60716E"
@@ -26,9 +25,7 @@ CITIES = [
 
 @lru_cache(maxsize=32)
 def font(size, bold=False):
-    path = Path("/usr/share/fonts/truetype/lato") / ("Lato-Bold.ttf" if bold else "Lato-Regular.ttf")
-    if not path.exists():
-        path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    path = ROOT / "assets" / "fonts" / ("Lato-Bold.ttf" if bold else "Lato-Regular.ttf")
     return ImageFont.truetype(str(path), size)
 
 def text(draw, xy, value, size=24, fill=INK, bold=False):

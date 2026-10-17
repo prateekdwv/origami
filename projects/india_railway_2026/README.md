@@ -13,15 +13,35 @@ geometry; positions between those events are interpolated.
 - `geography.py`, `assets/soi/`: official boundary, native projection and provenance.
 - `design.py`, `scene.py`, `manim.cfg`: deterministic portrait composition and Manim scene.
 - `replay.py`, `offline.py`: integrity checks, export audit and network denial.
-- `test_railway.py`, `test_render.py`: isolated synthetic tests, never production observations.
+- `tests/`: isolated synthetic unit tests, never production observations.
+- `test_render.py`: explicit, opt-in visual preview and export audit script.
+- `assets/fonts/`: bundled Lato regular/bold, source reference and SIL OFL license.
 - `data/` (ignored): manifest, versioned raw responses, coverage report and frozen replay.
 - `../../media/india_railway_2026/` (ignored): generated proof, videos, stills and audit reports.
 
 ## Setup and collection
 
+On Windows, follow the root README's one-time setup and restart your terminal
+application. All `uv run` commands below work in PowerShell without activation
+or a terminal setup script. File locking supports Windows and Linux. Both systems
+use the same bundled Lato fonts; no system font installation is needed. Native
+library versions can still affect rasterization, so generate exports and their
+audits in the same environment.
+
+For collection in PowerShell, set the key without putting it in shell history:
+
+```powershell
+$keyInput = Read-Host 'RailRadar API key' -AsSecureString
+$env:RAILRADAR_API_KEY = [System.Net.NetworkCredential]::new('', $keyInput).Password
+Remove-Variable keyInput
+```
+
+No API key is needed for the synthetic preview or design proof.
+
 From the repository root, run `uv sync --locked`. The shared environment adds
 PyShp for the official shapefile and PyProj for its geographic projection.
-FFmpeg, Cairo and fonts are provided by the repository's system setup script.
+The Windows setup provides FFmpeg and Python wheels for Cairo; the Linux setup
+provides native packages. Fonts are included in this project's assets.
 
 Create a free RailRadar account and configure `RAILRADAR_API_KEY` in the shell
 or your workspace's secret manager. Do not paste the key into source, chat,
@@ -209,6 +229,11 @@ Synthetic exports stay under `media/india_railway_2026/synthetic_test/`, never
 `data/`, and are not deliverable train replays. Tests cover cache recovery,
 two-pass versioning, quotas, midnight boundaries, station dwell, missing
 observations, rejected predictions, diversions, repeated stations and map extent.
+
+Unit tests are grouped under `tests/`. Discovery starts at this project directory
+so its supporting modules remain importable without installing an application
+package. Importing `test_render.py` during discovery does not render anything;
+its preview runs only when invoked directly.
 
 API contracts: [dated live status](https://railradar.in/docs/live-train-status),
 [track geometry](https://railradar.in/docs/train-route-geometry),

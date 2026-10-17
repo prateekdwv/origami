@@ -1,6 +1,6 @@
 """Atomic local cache and single-writer manifest. Never contains credentials."""
 from contextlib import contextmanager
-import fcntl
+import portalocker
 import hashlib
 import json
 import os
@@ -13,7 +13,7 @@ from settings import DAY
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
         stream.write("\n")
         stream.flush()
@@ -26,7 +26,7 @@ class Store:
     def __init__(self, directory):
         self.root = Path(directory)
         self.path = self.root / "manifest.json"
-        self.manifest = json.loads(self.path.read_text()) if self.path.exists() else {
+        self.manifest = json.loads(self.path.read_text(encoding="utf-8")) if self.path.exists() else {
             "version": 1, "day": DAY, "requests": [], "selection": [],
             "gate": "not_checked", "passes": {}, "budget_total": 90,
         }
@@ -37,7 +37,7 @@ class Store:
         write_json(self.path, self.manifest)
 
     def response(self, record):
-        return json.loads((self.root / record["file"]).read_text())["payload"]
+        return json.loads((self.root / record["file"]).read_text(encoding="utf-8"))["payload"]
 
     def successful(self, kind, identity):
         return [r for r in self.manifest["requests"]
@@ -48,12 +48,12 @@ class Store:
         self.root.mkdir(parents=True, exist_ok=True)
         with (self.root / ".lock").open("a") as handle:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                portalocker.lock(handle, portalocker.LOCK_EX | portalocker.LOCK_NB)
+            except portalocker.exceptions.LockException:
                 raise RuntimeError("Another acquisition/preparation process holds the cache lock") from None
             # Reload after obtaining the lock; recover responses saved before a crash.
             if self.path.exists():
-                self.manifest = json.loads(self.path.read_text())
+                self.manifest = json.loads(self.path.read_text(encoding="utf-8"))
             for record in self.manifest["requests"]:
                 if record["status"] == "inflight" and (self.root / record["file"]).exists():
                     record["status"] = "ok"
@@ -62,4 +62,7 @@ class Store:
                 if hashlib.sha256(staged.read_bytes()).hexdigest() != self.manifest["frozen_sha256"]:
                     raise RuntimeError("Interrupted frozen dataset has invalid hash")
                 staged.replace(self.root / "prepared.json")
-            yield self
+            try:
+                yield self
+            finally:
+                portalocker.unlock(handle)

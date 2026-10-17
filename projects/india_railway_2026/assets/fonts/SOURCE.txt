@@ -1,0 +1,3 @@
+Lato fonts, unmodified, from Google Fonts.
+Source: https://github.com/google/fonts/tree/47d54ca1ebb14fd864695f1d39dc734f39017c33/ofl/lato
+License: SIL Open Font License 1.1; see OFL.txt.

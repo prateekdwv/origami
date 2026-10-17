@@ -8,6 +8,8 @@ dependencies = [
     "manim>=0.21.0,<0.22",
     "pyproj>=3.7,<4",
     "pyshp>=3,<4",
+    "portalocker>=3,<4",
+    "tzdata>=2025.2",
 ]
 
 [tool.uv]

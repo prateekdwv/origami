@@ -188,7 +188,7 @@ class ModelTests(unittest.TestCase):
     def test_render_network_guard(self):
         result = subprocess.run([sys.executable, "-c",
                                  "from offline import deny_network; import socket; deny_network(); socket.create_connection(('example.com',443))"],
-                                cwd=Path(__file__).parent, capture_output=True, text=True)
+                                cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("network access is disabled", result.stderr)
     def test_full_official_rings_and_projection(self):
