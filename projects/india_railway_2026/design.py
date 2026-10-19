@@ -5,7 +5,6 @@ import cairo
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from geography import official_map, pixels, project
-from model import route_arrays
 from tracks import load_tracks, network_pixels
 from settings import CATEGORIES, HEIGHT, INTRO, REPLAY, ROOT, WIDTH
 
@@ -36,7 +35,61 @@ def text(draw, xy, value, size=24, fill=INK, bold=False):
 def rgb(value):
     return tuple(int(value[i:i+2], 16)/255 for i in (1, 3, 5))
 
-def base_image(dataset=None):
+
+# One display transform applies to boundary, tracks, labels and prepared routes.
+# Canonical stored coordinates and metre distances remain unchanged.
+MAP_SCALE = 1000 / 944
+CHART_LEFT, CHART_RIGHT, CHART_TOP, CHART_BOTTOM = 100, 1024, 1696, 1798
+
+
+def display_points(points):
+    return (np.asarray(points)-[540, 840])*MAP_SCALE+[540, 770]
+
+
+def right_text(draw, xy, value, size=24, fill=INK, bold=False):
+    value = str(value)
+    text(draw, (xy[0]-draw.textlength(value, font=font(size, bold)), xy[1]), value, size, fill, bold)
+
+
+def legend_position(index, categories):
+    return 56+(index % 2)*500, 1410+(index//2)*46
+
+
+def traffic_series(journeys):
+    """Exact half-open interval counts, grouping simultaneous starts and ends."""
+    events = [(0, 0), (86400, 0)]
+    for journey in journeys:
+        for segment in journey["segments"]:
+            events.extend(((segment["start"], 1), (segment["end"], -1)))
+    events = np.asarray(events)
+    times, inverse = np.unique(events[:, 0], return_inverse=True)
+    counts = np.cumsum(np.bincount(inverse, weights=events[:, 1])).astype(int)
+    return times, counts
+
+
+def chart_point(second, count, ceiling):
+    return (CHART_LEFT+(CHART_RIGHT-CHART_LEFT)*second/86400,
+            CHART_BOTTOM-(CHART_BOTTOM-CHART_TOP)*count/ceiling)
+
+
+def chart_ceiling(peak):
+    step = 500 if peak >= 500 else 100 if peak >= 100 else 20
+    return max(step, int(np.ceil(peak/step))*step)
+
+
+@lru_cache(maxsize=1)
+def city_label_layer():
+    """Fixed names on a transparent foreground; only glyphs and thin outlines."""
+    layer = Image.new("RGBA", (WIDTH, HEIGHT))
+    draw = ImageDraw.Draw(layer)
+    anchors = display_points(pixels(project([[lon, lat] for _, lon, lat, _, _ in CITIES])))
+    for (name, _, _, dx, dy), (x, y) in zip(CITIES, anchors):
+        draw.text((x+dx, y+dy), name, font=font(26), fill=INK,
+                  stroke_width=2, stroke_fill=BACKGROUND)
+    return layer
+
+
+def base_image(dataset=None, *, show_city_labels=True, series=None):
     """Rasterize every unsimplified official ring, including offshore islands."""
     surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, WIDTH, HEIGHT)
     context = cairo.Context(surface)
@@ -44,7 +97,7 @@ def base_image(dataset=None):
     context.paint()
     context.set_fill_rule(cairo.FILL_RULE_EVEN_ODD)
     for ring in official_map()[2]:
-        points = pixels(ring)
+        points = display_points(pixels(ring))
         context.move_to(*points[0])
         for point in points[1:]:
             context.line_to(*point)
@@ -57,10 +110,11 @@ def base_image(dataset=None):
     surface.flush()
     image = Image.frombuffer("RGBA", (WIDTH, HEIGHT), surface.get_data(), "raw", "BGRA", 0, 1).convert("RGB")
     draw = ImageDraw.Draw(image)
+    categories = (dataset or {}).get("categories", CATEGORIES)
     if (dataset or {}).get("display_routes"):
-        routes = [r["points"] for r in dataset["display_routes"]]
+        routes = [display_points(r["points"]) for r in dataset["display_routes"]]
     else:
-        routes = [j["route_pixels"] for j in (dataset or {}).get("journeys", [])]
+        routes = [display_points(j["route_pixels"]) for j in (dataset or {}).get("journeys", [])]
     mapped = bool((dataset or {}).get('track_source'))
     scheduled = bool((dataset or {}).get("scheduled_preview"))
     if mapped:
@@ -69,7 +123,7 @@ def base_image(dataset=None):
             raise ValueError('Preview railway asset has changed')
         # Thin, subdued national network; active demonstration paths stay legible.
         for route in network_pixels():
-            draw.line([tuple(p) for p in route], fill='#B2BFB5', width=2)
+            draw.line([tuple(p) for p in display_points(route)], fill='#BEC9BF', width=1)
         if not scheduled:
             for route in routes:
                 draw.line([tuple(p) for p in route], fill='#7B9488', width=3, joint='curve')
@@ -79,48 +133,51 @@ def base_image(dataset=None):
         for route in routes:
             draw.line([tuple(p) for p in route], fill=TRACK, width=3, joint='curve')
     for name, lon, lat, dx, dy in CITIES:
-        x, y = pixels(project([[lon, lat]]))[0]
+        x, y = display_points(pixels(project([[lon, lat]])))[0]
         draw.ellipse((x-2, y-2, x+2, y+2), fill=MUTED)
-        draw.text((x+dx, y+dy), name, font=font(26), fill=INK, stroke_width=2, stroke_fill=BACKGROUND)
     synthetic = bool((dataset or {}).get("synthetic_test_only"))
-    text(draw, (64, 49), "INDIA / TIMETABLE PREVIEW" if scheduled else "INDIA / IN MOTION" if not synthetic else "INDIA / DESIGN PREVIEW", 22, MUTED, True)
-    text(draw, (60, 85), "A day on the rails", 60, bold=True)
     day = date.fromisoformat((dataset or {}).get("date", "2026-10-10"))
-    text(draw, (64, 164), f"{day.day:02d} {day.strftime('%B').upper()} {day.year}", 27, MUTED)
-    draw.line((64, 266, 1016, 266), fill="#CCD4CA", width=2)
-    draw.rounded_rectangle((44, 1388, 1036, 1620), radius=18, fill="#FFFFFF", outline="#E0E4DA", width=1)
-    text(draw, (64, 1400), "SCHEDULED PASSENGER SERVICES / INCLUDING LOCALS" if scheduled else "SIMULATED SERVICES / SIX COLOUR FAMILIES" if synthetic else "PASSENGER JOURNEYS / SELECTED SAMPLE", 21, MUTED, True)
-    represented = {j["category"] for j in (dataset or {}).get("journeys", [])}
-    for i, (category, (label, color)) in enumerate(CATEGORIES.items()):
-        x, y = 64+(i % 2)*490, 1450+(i//2)*58
-        draw.ellipse((x, y+7, x+12, y+19), fill=color)
-        text(draw, (x+24, y), "Other passenger services" if scheduled and category == "express" else label, 25)
-        if dataset is None or category not in represented:
-            text(draw, (x+24, y+27), "awaiting data" if dataset is None else "not represented", 17, MUTED)
-    text(draw, (64, 1638), "DISPLAYED SCHEDULED ACTIVITY / 24 HOURS" if scheduled else "SIMULATED ACTIVITY / 24 HOURS" if synthetic else "SAMPLE ACTIVITY / 24 HOURS", 19, MUTED, True)
-    draw.line((64, 1766, 1016, 1766), fill="#CCD4CA", width=1)
-    for hour in (0, 6, 12, 18, 24):
-        text(draw, (min(64+952*hour/24, 963), 1775), f"{hour:02d}:00", 18, MUTED)
-    text(draw, (64, 1832), "Scheduled times · Inferred track paths · Coverage provisional" if scheduled else "Simulated journeys & timings · Mapped railway tracks" if synthetic else
-         "Representative sample · Recorded timings · Interpolated positions", 22)
-    text(draw, (64, 1870), "Boundary: Survey of India · Noncommercial use only" + ("" if scheduled else " · Traffic simulated" if synthetic else " · Timings: RailRadar"), 19, MUTED)
-    if mapped:
-        text(draw, (64, 1897), "Tracks: © OpenStreetMap contributors · openstreetmap.org/copyright · ODbL", 17, MUTED)
-    if scheduled:
-        draw.rounded_rectangle((578, 304, 1016, 350), radius=12, fill="#F1E5C9")
-        text(draw, (594, 315), "TIMETABLE TEST / NOT ACTUAL RUNS", 19, "#806019", True)
-        text(draw, (594, 358), "Unmapped intervals omitted", 20, MUTED)
-    elif synthetic:
-        draw.rounded_rectangle((578, 304, 1016, 350), radius=12, fill="#F1E5C9")
-        text(draw, (594, 315), "SIMULATED TRAFFIC / OSM TRACKS", 19, "#806019", True)
-        draw.line((775, 375, 814, 375), fill=TRACK, width=3)
-        text(draw, (825, 360), "Mapped railway", 21, MUTED)
+    text(draw, (56, 44), "India’s railways" + (" · simulation" if synthetic else ""), 40, bold=True)
+    right_text(draw, (1024, 52), f"{day.day:02d} {day.strftime('%b')} {day.year} · IST", 24, MUTED)
     if dataset is not None:
-        activity = dataset["activity"]
-        points = [(64+i*952/(len(activity)-1), 1765-value/(max(activity) or 1)*76) for i, value in enumerate(activity)]
-        draw.polygon([(64, 1765), *points, (1016, 1765)], fill="#CFDDD3")
+        total = f"{len(dataset['journeys']):,}"
+        text(draw, (56, 100), total, 40, bold=True)
+        offset = draw.textlength(total, font=font(40, True))+72
+        text(draw, (offset, 114), "journeys in 24 hours", 25, MUTED)
+    else:
+        text(draw, (56, 114), "Awaiting observations", 25, MUTED)
+    draw.line((56, 173, 1024, 173), fill="#CCD4CA", width=1)
+    for i, (category, (label, color)) in enumerate(categories.items()):
+        x, y = legend_position(i, categories)
+        draw.ellipse((x, y+9, x+12, y+21), fill=color)
+        text(draw, (x+24, y), "Unknown" if category == "unknown" else label, 24)
+    times, counts = traffic_series((dataset or {}).get("journeys", [])) if series is None else series
+    peak_index = int(np.argmax(counts))
+    peak, peak_second = int(counts[peak_index]), float(times[peak_index])
+    ceiling = chart_ceiling(peak)
+    if dataset is not None:
+        # Step geometry uses the same exact interval counts as the live counter.
+        points = [chart_point(t, n, ceiling) for t, n in zip(np.repeat(times, 2)[1:], np.repeat(counts, 2)[:-1])]
+        draw.polygon([(CHART_LEFT, CHART_BOTTOM), *points, (CHART_RIGHT, CHART_BOTTOM)], fill="#D4E0D6")
         draw.line(points, fill="#658775", width=2)
-        text(draw, (785, 1638), f"peak shown: {max(activity)}", 19, MUTED)
+    draw.line((CHART_LEFT, CHART_TOP, CHART_LEFT, CHART_BOTTOM), fill="#A4B2A8", width=1)
+    draw.line((CHART_LEFT, CHART_BOTTOM, CHART_RIGHT, CHART_BOTTOM), fill="#A4B2A8", width=1)
+    right_text(draw, (CHART_LEFT-12, CHART_TOP-12), f"{ceiling:,}", 18, MUTED)
+    right_text(draw, (CHART_LEFT-12, CHART_BOTTOM-12), "0", 18, MUTED)
+    for hour in (0, 6, 12, 18, 24):
+        x, _ = chart_point(hour*3600, 0, ceiling)
+        value = f"{hour:02d}:00"
+        left = min(CHART_RIGHT-draw.textlength(value, font=font(18)), x-22)
+        text(draw, (left, 1810), value, 18, MUTED)
+    footer = ("Scheduled traffic · Interpolated positions · Provisional coverage" if scheduled else
+              "Simulated traffic · Invented journeys and timings" if synthetic else
+              "Recorded timings · Interpolated positions" if dataset else "Design proof · Awaiting observations")
+    text(draw, (56, 1847), footer, 19, MUTED)
+    text(draw, (56, 1876), "Boundary: Survey of India · Noncommercial use only", 17, MUTED)
+    if mapped:
+        text(draw, (56, 1898), "Tracks: © OpenStreetMap contributors · ODbL", 16, MUTED)
+    if show_city_labels:
+        image.paste(city_label_layer(), (0, 0), city_label_layer())
     return image
 
 def second_at(video_time):
@@ -151,7 +208,7 @@ def motion_sample(segments, index, second, prepared=None):
     return distance(tail, tail_time), distance(segments[index], second), opacity
 
 
-def paint_trains(image, active, second):
+def paint_trains(image, active, second, categories=CATEGORIES, halo_radius=10):
     """Cairo preserves fractional pixel coverage; PIL's ellipse snaps to pixels."""
     data = bytearray(image.convert("RGBA").tobytes("raw", "BGRA"))
     surface = cairo.ImageSurface.create_for_data(data, cairo.FORMAT_ARGB32, *image.size)
@@ -161,7 +218,7 @@ def paint_trains(image, active, second):
     context.set_line_join(cairo.LINE_JOIN_ROUND)
     for journey, points, distances, index in active:
         a, b, opacity = motion_sample(journey["segments"], index, second, journey.get("_motion"))
-        color = rgb(CATEGORIES[journey["category"]][1])
+        color = rgb(categories[journey["category"]][1])
         start, point = np.array([np.interp([a, b], distances, points[:, axis]) for axis in (0, 1)]).T
         inside = points[np.searchsorted(distances, a, side="right"):np.searchsorted(distances, b)]
         context.set_source_rgba(*color, opacity)
@@ -172,7 +229,7 @@ def paint_trains(image, active, second):
         context.line_to(*point)
         context.stroke()
         halo = tuple(v*.18+background*.82 for v, background in zip(color, rgb(BACKGROUND)))
-        for radius, fill in ((10, halo), (5.5, color)):
+        for radius, fill in ((halo_radius, halo), (5.5, color)):
             context.set_source_rgba(*fill, opacity)
             context.arc(*point, radius, 0, 2*np.pi)
             context.fill()
@@ -187,8 +244,11 @@ def paint_trains(image, active, second):
 class FrameRenderer:
     """One composition per export, with prepared routes and cached static holds."""
     def __init__(self, dataset=None):
-        self.base, self.dataset = base_image(dataset), dataset
-        self.routes = [(j, *route_arrays(j)) for j in (dataset or {}).get("journeys", [])]
+        self.series = traffic_series((dataset or {}).get("journeys", []))
+        self.base = base_image(dataset, show_city_labels=False, series=self.series)
+        self.dataset = dataset
+        self.categories = (dataset or {}).get("categories", CATEGORIES)
+        self.routes = [(j, display_points(j["route_pixels"]), np.asarray(j["distances"])) for j in (dataset or {}).get("journeys", [])]
         intervals, starts, ends = [], [], []
         prepared_routes = []
         for original, points, distances in self.routes:
@@ -219,44 +279,27 @@ class FrameRenderer:
 
     def draw(self, video_time):
         image = self.base.copy()
-        dataset = self.dataset
-        draw = ImageDraw.Draw(image)
         second = second_at(video_time)
-        if dataset is None:
-            text(draw, (64, 217), "DESIGN PROOF — AWAITING OBSERVATIONS", 23, "#806019")
-            text(draw, (720, 180), "00:00", 50)
-            return image
-        journeys = dataset["journeys"]
-        synthetic = dataset.get("synthetic_test_only", False)
         active = [self.intervals[i] for i in np.flatnonzero((self.starts <= second) & (second < self.ends))]
-        counts = dict.fromkeys(CATEGORIES, 0)
+        counts = dict.fromkeys(self.categories, 0)
         for journey, _, _, _ in active:
             counts[journey["category"]] += 1
+        if self.dataset is not None and INTRO <= video_time < INTRO+REPLAY:
+            image = paint_trains(image, active, second, self.categories,
+                                 7.5 if self.dataset.get("scheduled_preview") else 10)
+        draw = ImageDraw.Draw(image)
         minute = min(1440, int(second//60))
-        text(draw, (752, 177), f"{minute//60:02d}:{minute%60:02d}", 54, bold=True)
-        text(draw, (960, 199), "IST", 21, MUTED)
-        if dataset.get("scheduled_preview"):
-            if video_time < INTRO:
-                status = f"{len(journeys):,} mapped timetable journeys · 00:00–24:00 IST"
-            elif video_time < INTRO+REPLAY:
-                status = f"{sum(counts.values()):,} scheduled trains shown · interpolated positions"
-            else:
-                status = f"Day complete · {len(journeys):,} / {dataset['coverage']['selected']:,} timetable journeys mapped"
-        elif video_time < INTRO:
-            status = f"{len(journeys)} {'invented' if synthetic else 'sampled'} journeys · 00:00–24:00 IST"
-        elif video_time < INTRO+REPLAY:
-            status = (f"{sum(counts.values()):02d} simulated trains · mapped tracks" if synthetic else
-                      f"{sum(counts.values()):02d} sample journeys underway · observed segments only")
-        else:
-            status = (f"Demo complete · {len(journeys)} invented journeys" if synthetic else
-                      f"Day complete · {len(journeys)} usable / {dataset['coverage']['selected']} selected journeys")
-        text(draw, (64, 219), status, 23, MUTED)
-        if INTRO <= video_time < INTRO+REPLAY:
-            image = paint_trains(image, active, second)
-            draw = ImageDraw.Draw(image)
-            for i, category in enumerate(CATEGORIES):
-                if category in self.represented:
-                    text(draw, (490+(i % 2)*490, 1450+(i//2)*58), f"{counts[category]:02d}", 24, CATEGORIES[category][1], True)
-        cursor = 64+second/86400*952
-        draw.line((cursor, 1681, cursor, 1766), fill="#B77909", width=3)
+        right_text(draw, (1024, 89), f"{minute//60:02d}:{minute%60:02d}", 60, bold=True)
+        if self.dataset is not None:
+            for i, category in enumerate(self.categories):
+                x, y = legend_position(i, self.categories)
+                right_text(draw, (x+468, y), f"{counts[category]:,}", 24, self.categories[category][1], True)
+        ceiling = chart_ceiling(int(max(self.series[1])))
+        cursor, point_y = chart_point(second, sum(counts.values()), ceiling)
+        draw.line((cursor, CHART_TOP-12, cursor, CHART_BOTTOM), fill="#D77916", width=3)
+        if self.dataset is not None:
+            draw.ellipse((cursor-4, point_y-4, cursor+4, point_y+4), fill="#D77916")
+        label = f"{sum(counts.values()):,} trains underway now" if self.dataset is not None else "Awaiting data"
+        text(draw, (56, 1610), label, 24, INK, True)
+        image.paste(city_label_layer(), (0, 0), city_label_layer())
         return image

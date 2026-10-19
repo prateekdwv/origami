@@ -14,7 +14,7 @@ from scipy.spatial import cKDTree
 from geography import boundary_hash, pixels, project
 from offline import deny_network
 from prepare_tracks import simplify
-from settings import CATEGORIES, MEDIA, ROOT, classify
+from settings import MEDIA, ROOT, SCHEDULE_CATEGORIES, SCHEDULE_PALETTE_BASIS, classify_scheduled
 from store import write_json
 from tracks import DIRECTORY, load_tracks
 
@@ -28,15 +28,15 @@ def read_gzip(path):
 
 def input_hashes(day):
     paths = [SCHEDULES / name for name in ("trains.json.gz", "stations.json.gz", f"journeys-{day}.json.gz")]
-    paths += [DIRECTORY / "geometry.json.gz", ROOT / "schedule_render.py"]
+    paths += [DIRECTORY / "geometry.json.gz", ROOT / "schedule_render.py", ROOT / "settings.py"]
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
 def category(train):
-    kind = train["service_type"].upper()
-    abbreviations = {"RAJ": "rajdhani", "SHTB": "shatabdi", "JSHTB": "shatabdi",
-                     "EMU": "local", "MEMU": "regional", "DMU": "regional", "PASS": "regional"}
-    return classify(train["name"], train["service_type"]) or abbreviations.get(kind, "express")
+    result = classify_scheduled(train["name"], train["service_type"])
+    if result is None:
+        raise ValueError(f"Non-passenger timetable: {train['number']}")
+    return result
 
 
 def mapped_legs(trains, stations):
@@ -223,6 +223,8 @@ def build_dataset(day):
             activity += (times >= segment["start"]) & (times < segment["end"])
     _, provenance = load_tracks()
     return {"version": 1, "date": day, "timezone": "Asia/Kolkata", "scheduled_preview": True,
+            "categories": SCHEDULE_CATEGORIES,
+            "palette_basis": SCHEDULE_PALETTE_BASIS,
             "basis": "Provisional collected timetables; interpolated movement on inferred OSM paths, not actual operations",
             "track_source": "OpenStreetMap", "railway_geometry_sha256": provenance["geometry_sha256"],
             "boundary_sha256": boundary_hash(), "source_hashes": input_hashes(day), "coverage": coverage,
@@ -246,9 +248,11 @@ def main():
         data = build_dataset(args.date)
         path.write_bytes(gzip.compress(json.dumps(data, separators=(",", ":")).encode(), mtime=0))
     from replay import export_stills, validate, verify
+    from design import traffic_series
     validate(data)
     write_json(output / "coverage.json", data["coverage"])
-    print(f"Displaying {len(data['journeys']):,}/{data['coverage']['selected']:,} timetable journeys; peak {max(data['activity']):,}", flush=True)
+    _, counts = traffic_series(data["journeys"])
+    print(f"Displaying {len(data['journeys']):,}/{data['coverage']['selected']:,} timetable journeys; exact peak {max(counts):,}", flush=True)
     video = output / "SCHEDULED_TEST.mp4"
     if not args.verify_only:
         export_stills(data, output)

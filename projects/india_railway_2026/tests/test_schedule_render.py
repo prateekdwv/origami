@@ -41,7 +41,7 @@ class ScheduledPreviewTests(unittest.TestCase):
         self.assertEqual(valid, {0})
 
     def test_abbreviations_and_unknown_types_remain_visible(self):
-        for kind, expected in (("Suburban", "local"), ("EMU", "local"), ("Raj", "rajdhani"), ("Pass", "regional"), ("unclassified", "express")):
+        for kind, expected in (("Suburban", "local"), ("EMU", "local"), ("Raj", "rajdhani"), ("Pass", "regional"), ("unclassified", "unknown")):
             self.assertEqual(category(dict(self.train, service_type=kind)), expected)
 
     def test_prepared_motion_matches_uncached_motion_across_a_gap(self):

@@ -35,8 +35,62 @@ verified itinerary or recorded position. Stations snap within 2.5 km; disconnect
 tracks, excessive detours and speeds over 350 km/h are omitted. No missing track
 connections or timings are invented. The preview reports how many journeys have
 usable mapped travel, and counters/chart reflect displayed intervals only.
-Incomplete journeys may contain gaps. Service abbreviations are classified into
-the existing colour families; unknown passenger types use Other passenger services.
+Incomplete journeys may contain gaps. Scheduled previews use eight service
+groups, with their palette stored in the prepared dataset:
+
+| Group | Colour | Classification |
+| --- | --- | --- |
+| Mail / Express | Blue `#0072B2` | Explicit Mail/Express type, or express evidence in the name |
+| Superfast | Magenta `#A83D83` | Explicit Superfast/SF type, or SF/Superfast in the name when the source type is not definitive |
+| Passenger / Regional | Deep violet `#6842A6` | Passenger, MEMU, DEMU and DMU; also Namo Bharat Rapid Rail/Vande Bharat Metro |
+| Suburban / Local | Teal `#008B8B` | Suburban, local, EMU and MMTS |
+| Vande Bharat | Orange `#E87818` | Vande Bharat family, including Sleeper; excludes the Metro/Rapid Rail variant |
+| Rajdhani | Red `#BF3043` | Rajdhani family |
+| Shatabdi / Jan Shatabdi | Oxford-blue-inspired `#27466B` | Both named families |
+| Unknown service type | Grey `#6B7280` | Insufficient information; never silently treated as Express |
+
+The palette is **livery-inspired**, not a reconstruction of each train's actual
+paint scheme. Vande Bharat orange reflects the orange/grey variant shown in
+[government imagery](https://static.pib.gov.in/WriteReadData/specificdocs/documents/2026/apr/doc2026415847301.pdf).
+Rajdhani red, Shatabdi blue and conventional Mail/Express blue draw on the
+[RDSO ICF coach painting manual](https://rdso.indianrailways.gov.in/uploads/files/Painting%2012.pdf).
+These are representative associations: Vande Bharat also has white/blue variants,
+and [some Rajdhani services use Tejas rakes](https://www.pib.gov.in/PressReleasePage.aspx?PRID=1782298&lang=2&reg=48).
+The screen hex values are display approximations, not official paint codes.
+Magenta, violet and teal distinguish the remaining broad service groups; they
+do not assert universal Superfast, regional or suburban liveries. No zone-wide
+colour or dated rake assignment is inferred. Prepared datasets and export audits
+record `palette_basis`; the representative colour associations are documented here.
+
+This is a display hierarchy: the three named families take priority over generic
+speed classes. Other services use an explicit source service type before name
+fallbacks. Intercity is not automatically treated as a stopping passenger service.
+Duronto, Tejas, Garib Rath, Humsafar and Amrit Bharat use Mail/Express unless
+Superfast is explicitly indicated; a brand alone does not establish that class.
+Special/holiday operation is independent of service type: an SF Special remains
+Superfast, an Express Special remains Express, and Special alone stays Unknown.
+Neither animation speed nor a train-number pattern determines the category.
+Raw source classifications remain unchanged and may themselves be imperfect.
+The scheduled legend fits four rows in the existing canvas, with smaller marker
+halos to reduce overlap. The legacy synthetic/observation palette stays separate.
+City names stay fixed and are composited above train markers and trails, with a
+thin background-coloured outline and no opaque label boxes. The transparent
+label layer is cached rather than typeset again for every frame.
+
+The compact portrait layout keeps the daily journey total at the top, alongside
+the title, date and clock. The map is enlarged uniformly by about 5.9%, preserving
+the full boundary and island groups; the same display transform applies to tracks,
+train positions and city anchors without modifying stored routes or distances.
+The eight-group legend has no enclosing card. The activity graph labels the
+current count as a fixed heading above the graph. The y-axis provides the activity
+scale without a separate peak annotation. Counts come from exact movement-interval
+boundaries, including station dwell, rather than the legacy five-minute activity
+samples. For this dataset,
+the exact peak is 2,402 at 08:02 IST; the older sampled maximum was 2,399.
+The graph uses a rounded axis ceiling above the exact peak. Intro and
+outro timing, the 1080 × 1920 canvas and 30 fps remain unchanged.
+Data qualifications and attribution are consolidated in the footer; detailed
+methodology and the livery-inspired palette basis remain documented here.
 The video explicitly labels scheduled times, inferred paths and provisional
 coverage. It does not show actual delays or certify national timetable completeness.
 

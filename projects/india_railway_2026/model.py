@@ -174,8 +174,8 @@ def position(journey, second, arrays=None):
     return None
 
 
-def active_counts(journeys, second):
-    counts = dict.fromkeys(CATEGORIES, 0)
+def active_counts(journeys, second, categories=CATEGORIES):
+    counts = dict.fromkeys(categories, 0)
     for journey in journeys:
         if any(s["start"] <= second < s["end"] for s in journey["segments"]):
             counts[journey["category"]] += 1
