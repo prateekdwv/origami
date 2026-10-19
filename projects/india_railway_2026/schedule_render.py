@@ -260,13 +260,16 @@ def build_dataset(day):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", default="2026-10-15", type=lambda value: date.fromisoformat(value).isoformat())
+    parser.add_argument("--final", action="store_true", help="Higher-quality upload export with every frame audited")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--stills-only", action="store_true")
     mode.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    output = OUTPUT / args.date
+    cache = OUTPUT / args.date
+    cache.mkdir(parents=True, exist_ok=True)
+    output = MEDIA / "final" / args.date if args.final else cache
     output.mkdir(parents=True, exist_ok=True)
-    path = output / "preview_dataset.json.gz"
+    path = cache / "preview_dataset.json.gz"
     started = time.perf_counter()
     data = read_gzip(path) if path.exists() else None
     rebuilt = not cache_matches(data, args.date)
@@ -284,14 +287,14 @@ def main():
         temporary.replace(path)
     _, counts = traffic_series(data["journeys"])
     print(f"Displaying {len(data['journeys']):,}/{data['coverage']['selected']:,} timetable journeys; exact peak {max(counts):,}", flush=True)
-    video = output / "SCHEDULED_TEST.mp4"
+    video = output / (f"India_Railways_{args.date}.mp4" if args.final else "SCHEDULED_TEST.mp4")
     preparation = {"cache_rebuilt": rebuilt, "seconds": time.perf_counter()-started}
     if args.stills_only:
         export_stills(data, output)
         write_json(output / "coverage.json", data["coverage"])
         return
     if args.verify_only:
-        report = verify(data, video, output)
+        report = verify(data, video, output, full=args.final)
     else:
         # Publish only after audit: an interrupted/failed export keeps the last video.
         with tempfile.TemporaryDirectory(prefix=".render-", dir=output) as folder:
@@ -300,9 +303,9 @@ def main():
             compose = FrameRenderer(data)
             initialization = time.perf_counter()-started
             export_stills(data, staging, compose)
-            performance = render_video(data, staging / video.name, compose)
+            performance = render_video(data, staging / video.name, compose, crf=18 if args.final else 23)
             performance["initialization_seconds"] = initialization
-            report = verify(data, staging / video.name, staging, compose=compose)
+            report = verify(data, staging / video.name, staging, full=args.final, compose=compose)
             report.update(video=str(video), performance=performance, preparation=preparation)
             write_json(staging / "verification.json", report)
             write_json(staging / "coverage.json", data["coverage"])
@@ -312,7 +315,7 @@ def main():
                 incoming = output / (artifact.name+".tmp")
                 shutil.copyfile(artifact, incoming)
                 incoming.replace(output / artifact.name)
-    print(f"Video audit: {report['status']} ({report['frames_compared']} sampled frames). {video}", flush=True)
+    print(f"Video audit: {report['status']} ({report['frames_compared']} frames, {report.get('mode', 'quick')} audit). {video}", flush=True)
 
 
 if __name__ == "__main__":

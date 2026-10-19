@@ -1,10 +1,11 @@
 # Railway simplification results
 
 Measured on this Windows laptop with Python 3.13, against commit `8890495`.
+Code counts include the final-export option; benchmark timings describe the original simplification.
 
 | Measurement | Before | After |
 | --- | ---: | ---: |
-| Production Python lines | 2,343 | 1,281 (45.3% fewer) |
+| Production Python lines | 2,343 | 1,286 (45.1% fewer) |
 | Production Python files | 17 | 11 |
 | Drawing code, including moved helpers | 305 | 230 (24.6% fewer) |
 | 150-frame composition + encoding, median | 43.9 s | 40.2 s (8.4% less time) |
@@ -40,7 +41,7 @@ removed; all retained dependency versions stayed fixed. Manim remains installed
 for Ganesh. Railway rendering uses one Matplotlib/Agg backend and direct PyAV
 encoding; there is no backend registry or application framework.
 
-All **44 tests passed**. Rebuilt journeys, categories, coordinates, movement
+All **45 tests passed**. Rebuilt journeys, categories, coordinates, movement
 intervals, coverage and sampled activity match the baseline exactly: **9,763
 journeys**, with an exact peak of **2,402**. Native font antialiasing and overlap
 compositing produce small pixel differences. Midnight, morning, noon, evening and

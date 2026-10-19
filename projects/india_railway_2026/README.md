@@ -21,9 +21,15 @@ uv run python projects/india_railway_2026/schedule_render.py
 uv run python projects/india_railway_2026/schedule_render.py --stills-only
 # Audit an existing export without rendering again:
 uv run python projects/india_railway_2026/schedule_render.py --verify-only
+# Higher-quality final upload, with all 1,800 encoded frames audited:
+uv run python projects/india_railway_2026/schedule_render.py --final
 ```
 
 Open `media/india_railway_2026/scheduled_test/2026-10-15/SCHEDULED_TEST.mp4`.
+The final command writes `media/india_railway_2026/final/2026-10-15/India_Railways_2026-10-15.mp4`
+using H.264 CRF 18 instead of test CRF 23, with the same approved canvas and timing.
+It reuses the scheduled movement cache and publishes only after every encoded frame
+passes comparison. Source-data qualifications remain visible in the final video.
 The same directory holds a poster, contact sheet, compressed prepared dataset,
 mapping coverage and sampled video verification. Inputs are hash-checked before
 reusing the prepared dataset; source snapshots are never modified. Only the main

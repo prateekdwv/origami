@@ -55,7 +55,7 @@ def audit_indices(data, full=False):
     return list(range(total)) if full else sorted(set(range(0, total, 150)) | boundaries | {min(total-1, peak), total-1})
 
 
-def render_video(data, destination, compose=None):
+def render_video(data, destination, compose=None, *, crf=23):
     """Encode exactly one frame per tick, directly through FFmpeg's PyAV bindings."""
     started = time.perf_counter()
     compose = compose or FrameRenderer(data)
@@ -64,7 +64,7 @@ def render_video(data, destination, compose=None):
     with av.open(str(destination), "w", options={"movflags": "+faststart"}) as container:
         stream = container.add_stream("libx264", rate=FPS)
         stream.width, stream.height, stream.pix_fmt = WIDTH, HEIGHT, "yuv420p"
-        stream.options = {"crf": "23", "preset": "medium"}
+        stream.options = {"crf": str(crf), "preset": "medium"}
         total = (INTRO+REPLAY+OUTRO)*FPS
         for index in range(total):
             frame = av.VideoFrame.from_ndarray(np.asarray(compose(index/FPS)), format="rgb24")
@@ -76,7 +76,7 @@ def render_video(data, destination, compose=None):
         for packet in stream.encode():
             container.mux(packet)
     return {"initialization_seconds": initialization, "export_seconds": time.perf_counter()-started,
-            "frames": total, "encoder": "libx264", "preset": "medium", "crf": 23}
+            "frames": total, "encoder": "libx264", "preset": "medium", "crf": crf}
 
 
 def decoded_frames(video, indices, full):
@@ -159,6 +159,8 @@ def verify(data, video, directory=MEDIA, *, full=False, compose=None):
                     hold_error = max(hold_error, float(np.abs(np.subtract(actual, last_hold, dtype=np.int16)).mean()))
                 last_hold = actual.copy()
             frames += 1
+            if full and frames % 150 == 0:
+                print(f"Audited {frames}/{len(indices)} frames", flush=True)
     finally:
         decoded.close()
     checks.update({"requested_frames_compared": frames == len(indices),
