@@ -1,8 +1,6 @@
 """Presentation smoothing preserves positions, canvas size and observation gaps."""
 import unittest
-import numpy as np
-from PIL import Image
-from design import motion_sample, paint_trains
+from model import motion_sample
 from model import position
 
 
@@ -40,14 +38,3 @@ class MotionTests(unittest.TestCase):
         journey = {"segments": self.segments, "route_pixels": [[0, 0], [200, 0]], "distances": [0, 200]}
         for index, second in ((0, 120), (1, 1100), (2, 1500)):
             self.assertAlmostEqual(motion_sample(self.segments, index, second)[1], position(journey, second)[0])
-
-    def test_fractional_marker_movement_changes_pixels_without_resizing(self):
-        journey = {"category": "express", "segments": [{"start": 0, "end": 2000, "from": 0, "to": 0}]}
-        base = Image.new("RGB", (64, 64), "white")
-        points = np.array([[32., 32.], [50., 32.]])
-        a = paint_trains(base, [(journey, points, np.array([0, 100]), 0)], 500)
-        b = paint_trains(base, [(journey, points+[.2, 0], np.array([0, 100]), 0)], 500)
-        self.assertEqual(a.size, base.size)
-        self.assertTrue(np.any(np.asarray(a) != np.asarray(b)))
-        invisible = paint_trains(base, [(journey, points, np.array([0, 100]), 0)], 0)
-        np.testing.assert_array_equal(np.asarray(invisible), np.asarray(base))

@@ -45,18 +45,44 @@ class ScheduledPreviewTests(unittest.TestCase):
             self.assertEqual(category(dict(self.train, service_type=kind)), expected)
 
     def test_prepared_motion_matches_uncached_motion_across_a_gap(self):
-        # Exercise the renderer's prepared continuity bounds without rasterizing a map.
-        from unittest.mock import patch
-        from PIL import Image
+        # Exercise prepared continuity bounds without rasterizing a map.
         segments = [{"start": 0, "end": 1000, "from": 0, "to": 100, "kind": "travel"},
                     {"start": 1000, "end": 1200, "from": 100, "to": 100, "kind": "dwell"},
                     {"start": 1500, "end": 2500, "from": 200, "to": 300, "kind": "travel"}]
         journey = {"id": "test", "category": "local", "segments": segments,
                    "route_pixels": [[0, 0], [300, 0]], "distances": [0, 300]}
-        with patch("design.base_image", return_value=Image.new("RGB", (1080, 1920))):
-            renderer = FrameRenderer({"journeys": [journey]})
+        renderer = FrameRenderer.__new__(FrameRenderer)
+        renderer.prepare_routes([journey])
         prepared = renderer.routes[0][0]["_motion"]
         for index, time in ((0, 1), (0, 999), (1, 1000), (1, 1199), (2, 1500), (2, 2000)):
             self.assertEqual(motion_sample(segments, index, time), motion_sample(segments, index, time, prepared))
         for time, count in ((999, 1), (1000, 1), (1200, 0), (1499, 0), (1500, 1), (2500, 0)):
             self.assertEqual(int(np.sum((renderer.starts <= time) & (time < renderer.ends))), count)
+
+    def test_cache_ignores_presentation_but_rejects_input_or_preparation_changes(self):
+        from unittest.mock import patch
+        import schedule_render as scheduled
+        inputs = {"trains.json.gz": "source-hash"}
+        data = {"date": "2026-10-15", "source_hashes": inputs, "boundary_sha256": "boundary",
+                "preparation_version": scheduled.PREPARATION_VERSION}
+        with patch.object(scheduled, "input_hashes", return_value=inputs), \
+             patch.object(scheduled, "boundary_hash", return_value="boundary"):
+            self.assertTrue(scheduled.cache_matches(dict(data, categories={"new": "palette"}), "2026-10-15"))
+            self.assertFalse(scheduled.cache_matches(dict(data, preparation_version=-1), "2026-10-15"))
+            self.assertFalse(scheduled.cache_matches(dict(data, source_hashes={}), "2026-10-15"))
+            self.assertFalse(scheduled.cache_matches(dict(data, boundary_sha256="changed"), "2026-10-15"))
+            self.assertFalse(scheduled.cache_matches(data, "2026-10-16"))
+
+    def test_cached_categories_refresh_without_touching_movement_data(self):
+        from unittest.mock import patch
+        from schedule_render import update_categories
+        journey = {"id": "12345@2026-10-15", "category": "unknown", "segments": [],
+                   "route_pixels": [[1, 2], [3, 4]], "distances": [0, 10]}
+        data = {"journeys": [journey], "coverage": {}}
+        route, intervals = journey["route_pixels"], journey["segments"]
+        with patch("schedule_render.read_gzip", return_value=[self.train]):
+            update_categories(data)
+        self.assertEqual(journey["category"], "local")
+        self.assertEqual(data["coverage"]["category_journeys"], {"local": 1})
+        self.assertIs(journey["route_pixels"], route)
+        self.assertIs(journey["segments"], intervals)

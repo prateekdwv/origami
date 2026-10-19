@@ -2,9 +2,13 @@
 import argparse
 from collections import Counter, defaultdict
 from datetime import date
+from pathlib import Path
 import gzip
 import hashlib
 import json
+import shutil
+import tempfile
+import time
 
 import numpy as np
 from scipy.sparse import coo_matrix
@@ -12,7 +16,6 @@ from scipy.sparse.csgraph import connected_components, dijkstra
 from scipy.spatial import cKDTree
 
 from geography import boundary_hash, pixels, project
-from offline import deny_network
 from prepare_tracks import simplify
 from settings import MEDIA, ROOT, SCHEDULE_CATEGORIES, SCHEDULE_PALETTE_BASIS, classify_scheduled
 from store import write_json
@@ -20,6 +23,8 @@ from tracks import DIRECTORY, load_tracks
 
 SCHEDULES = ROOT / "assets" / "schedules"
 OUTPUT = MEDIA / "scheduled_test"
+# Bump when routing or movement preparation changes, not for presentation edits.
+PREPARATION_VERSION = 1
 
 
 def read_gzip(path):
@@ -28,8 +33,28 @@ def read_gzip(path):
 
 def input_hashes(day):
     paths = [SCHEDULES / name for name in ("trains.json.gz", "stations.json.gz", f"journeys-{day}.json.gz")]
-    paths += [DIRECTORY / "geometry.json.gz", ROOT / "schedule_render.py", ROOT / "settings.py"]
+    paths += [DIRECTORY / "geometry.json.gz"]
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+def cache_matches(data, day):
+    return (data is not None and data.get("date") == day
+            and data.get("preparation_version") == PREPARATION_VERSION
+            and data.get("source_hashes") == input_hashes(day)
+            and data.get("boundary_sha256") == boundary_hash())
+
+
+def update_categories(data):
+    """Restyle cached movements without routing the network again."""
+    previous = json.dumps([data.get("categories"), data.get("palette_basis"),
+                           [j["category"] for j in data["journeys"]]], sort_keys=True)
+    trains = {t["number"]: t for t in read_gzip(SCHEDULES / "trains.json.gz")}
+    for journey in data["journeys"]:
+        journey["category"] = category(trains[journey["id"].split("@")[0]])
+    data["categories"], data["palette_basis"] = SCHEDULE_CATEGORIES, SCHEDULE_PALETTE_BASIS
+    data["coverage"]["category_journeys"] = dict(Counter(j["category"] for j in data["journeys"]))
+    return previous != json.dumps([data["categories"], data["palette_basis"],
+                                   [j["category"] for j in data["journeys"]]], sort_keys=True)
 
 
 def category(train):
@@ -222,7 +247,8 @@ def build_dataset(day):
         for segment in journey["segments"]:
             activity += (times >= segment["start"]) & (times < segment["end"])
     _, provenance = load_tracks()
-    return {"version": 1, "date": day, "timezone": "Asia/Kolkata", "scheduled_preview": True,
+    return {"version": 1, "preparation_version": PREPARATION_VERSION,
+            "date": day, "timezone": "Asia/Kolkata", "scheduled_preview": True,
             "categories": SCHEDULE_CATEGORIES,
             "palette_basis": SCHEDULE_PALETTE_BASIS,
             "basis": "Provisional collected timetables; interpolated movement on inferred OSM paths, not actual operations",
@@ -234,34 +260,58 @@ def build_dataset(day):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--date", default="2026-10-15", type=lambda value: date.fromisoformat(value).isoformat())
-    parser.add_argument("--stills-only", action="store_true")
-    parser.add_argument("--verify-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--stills-only", action="store_true")
+    mode.add_argument("--verify-only", action="store_true")
     args = parser.parse_args()
-    deny_network()
     output = OUTPUT / args.date
     output.mkdir(parents=True, exist_ok=True)
     path = output / "preview_dataset.json.gz"
+    started = time.perf_counter()
     data = read_gzip(path) if path.exists() else None
-    if data is None or data.get("source_hashes") != input_hashes(args.date) or data["boundary_sha256"] != boundary_hash():
+    rebuilt = not cache_matches(data, args.date)
+    if rebuilt:
         if args.verify_only:
             raise RuntimeError("Preview inputs changed; regenerate before verification")
         data = build_dataset(args.date)
-        path.write_bytes(gzip.compress(json.dumps(data, separators=(",", ":")).encode(), mtime=0))
-    from replay import export_stills, validate, verify
-    from design import traffic_series
+    restyled = update_categories(data)
+    from replay import export_stills, render_video, validate, verify
+    from design import FrameRenderer, traffic_series
     validate(data)
-    write_json(output / "coverage.json", data["coverage"])
+    if (rebuilt or restyled) and not args.verify_only:
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(gzip.compress(json.dumps(data, separators=(",", ":")).encode(), mtime=0))
+        temporary.replace(path)
     _, counts = traffic_series(data["journeys"])
     print(f"Displaying {len(data['journeys']):,}/{data['coverage']['selected']:,} timetable journeys; exact peak {max(counts):,}", flush=True)
     video = output / "SCHEDULED_TEST.mp4"
-    if not args.verify_only:
+    preparation = {"cache_rebuilt": rebuilt, "seconds": time.perf_counter()-started}
+    if args.stills_only:
         export_stills(data, output)
-        if args.stills_only:
-            return
-        from scene import render_video
-        write_json(output / "verification.json", {"passed": False, "status": "new render awaiting audit"})
-        render_video(data, output, name="SCHEDULED_TEST")
-    report = verify(data, video, output)
+        write_json(output / "coverage.json", data["coverage"])
+        return
+    if args.verify_only:
+        report = verify(data, video, output)
+    else:
+        # Publish only after audit: an interrupted/failed export keeps the last video.
+        with tempfile.TemporaryDirectory(prefix=".render-", dir=output) as folder:
+            staging = Path(folder)
+            started = time.perf_counter()
+            compose = FrameRenderer(data)
+            initialization = time.perf_counter()-started
+            export_stills(data, staging, compose)
+            performance = render_video(data, staging / video.name, compose)
+            performance["initialization_seconds"] = initialization
+            report = verify(data, staging / video.name, staging, compose=compose)
+            report.update(video=str(video), performance=performance, preparation=preparation)
+            write_json(staging / "verification.json", report)
+            write_json(staging / "coverage.json", data["coverage"])
+            for artifact in staging.iterdir():
+                # Copy content into this folder before replacing: Windows must not
+                # retain TemporaryDirectory's owner-only permissions on exports.
+                incoming = output / (artifact.name+".tmp")
+                shutil.copyfile(artifact, incoming)
+                incoming.replace(output / artifact.name)
     print(f"Video audit: {report['status']} ({report['frames_compared']} sampled frames). {video}", flush=True)
 
 

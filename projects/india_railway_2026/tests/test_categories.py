@@ -1,10 +1,8 @@
 """Source-aware category priority, independent operating status and colour use."""
 import unittest
 
-import numpy as np
-from PIL import Image
 
-from design import legend_position, paint_trains
+from design import legend_position
 from model import active_counts
 from settings import SCHEDULE_CATEGORIES, classify_scheduled
 
@@ -47,14 +45,6 @@ class CategoryTests(unittest.TestCase):
         self.assertIsNone(classify_scheduled("Parcel Express", "Superfast"))
         journey = {"category": "unknown", "segments": [{"start": 0, "end": 1000, "from": 0, "to": 100}]}
         self.assertEqual(active_counts([journey], 500, SCHEDULE_CATEGORIES)["unknown"], 1)
-
-    def test_scheduled_marker_uses_its_dataset_palette(self):
-        palette = {"unknown": ("Unknown", "#6B7280")}
-        journey = {"category": "unknown", "segments": [{"start": 0, "end": 1000, "from": 0, "to": 0}]}
-        image = paint_trains(Image.new("RGB", (64, 64), "white"),
-                             [(journey, np.array([[32., 32.], [40., 32.]]), np.array([0., 100.]), 0)],
-                             500, palette, 7.5)
-        self.assertEqual(image.getpixel((32, 32)), (107, 114, 128))
 
     def test_eight_category_legend_fits_without_touching_activity_chart(self):
         self.assertEqual(len(SCHEDULE_CATEGORIES), 8)

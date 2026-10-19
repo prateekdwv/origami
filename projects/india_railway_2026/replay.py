@@ -2,34 +2,15 @@
 import hashlib
 import json
 import subprocess
+import time
 import av
 import numpy as np
 from PIL import Image
 from design import FrameRenderer, second_at, traffic_series
 from geography import boundary_hash, official_map
 from model import active_counts, position
-from settings import CATEGORIES, DATA, DAY, FPS, HEIGHT, INTRO, MEDIA, OUTRO, REPLAY, WIDTH
+from settings import CATEGORIES, FPS, HEIGHT, INTRO, MEDIA, OUTRO, REPLAY, WIDTH
 from store import write_json
-
-def load_prepared(directory=DATA):
-    path = directory / "prepared.json"
-    if not path.exists():
-        raise RuntimeError("No frozen dataset. Collect both passes, then run prepare; no synthetic fallback is allowed")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("synthetic_test_only"):
-        raise RuntimeError("Synthetic previews cannot be loaded as a production replay")
-    if data.get("scheduled_preview"):
-        raise RuntimeError("Scheduled previews cannot be loaded as a recorded-observation replay")
-    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if hashlib.sha256(path.read_bytes()).hexdigest() != manifest.get("frozen_sha256"):
-        raise RuntimeError("Frozen dataset integrity check failed")
-    if data["date"] != DAY or data["boundary_sha256"] != boundary_hash():
-        raise RuntimeError("Replay date or official boundary has changed")
-    for source in data["sources"]:
-        if hashlib.sha256((directory / source["file"]).read_bytes()).hexdigest() != source["sha256"]:
-            raise RuntimeError("Cached source integrity check failed")
-    validate(data)
-    return data
 
 def validate(data):
     ids = [j["id"] for j in data["journeys"]]
@@ -53,11 +34,11 @@ def validate(data):
     if expected != data["activity"]:
         raise ValueError("Activity chart disagrees with displayed sample")
 
-def export_stills(data, directory=MEDIA):
+def export_stills(data, directory=MEDIA, compose=None):
     directory.mkdir(parents=True, exist_ok=True)
-    compose = FrameRenderer(data)
+    compose = compose or FrameRenderer(data)
     times, counts = traffic_series(data["journeys"])
-    peak_time = INTRO + float(times[np.argmax(counts)])/86400*REPLAY
+    peak_time = np.nextafter(INTRO + float(times[np.argmax(counts)])/86400*REPLAY, np.inf)
     compose(peak_time).save(directory / "IndiaRailway_2026_poster.png")
     compose(INTRO+REPLAY).save(directory / "IndiaRailway_2026_final.png")
     sheet = Image.new("RGB", (1080, 1280))
@@ -72,6 +53,30 @@ def audit_indices(data, full=False):
     peak = round((INTRO + float(times[np.argmax(counts)])/86400*REPLAY)*FPS)
     boundaries = {int(t*FPS)+offset for t in (INTRO, INTRO+REPLAY) for offset in (-1, 0)}
     return list(range(total)) if full else sorted(set(range(0, total, 150)) | boundaries | {min(total-1, peak), total-1})
+
+
+def render_video(data, destination, compose=None):
+    """Encode exactly one frame per tick, directly through FFmpeg's PyAV bindings."""
+    started = time.perf_counter()
+    compose = compose or FrameRenderer(data)
+    initialization = time.perf_counter()-started
+    started = time.perf_counter()
+    with av.open(str(destination), "w", options={"movflags": "+faststart"}) as container:
+        stream = container.add_stream("libx264", rate=FPS)
+        stream.width, stream.height, stream.pix_fmt = WIDTH, HEIGHT, "yuv420p"
+        stream.options = {"crf": "23", "preset": "medium"}
+        total = (INTRO+REPLAY+OUTRO)*FPS
+        for index in range(total):
+            frame = av.VideoFrame.from_ndarray(np.asarray(compose(index/FPS)), format="rgb24")
+            frame.pts = index
+            for packet in stream.encode(frame):
+                container.mux(packet)
+            if index % 150 == 0:
+                print(f"Encoded {index}/{total} frames", flush=True)
+        for packet in stream.encode():
+            container.mux(packet)
+    return {"initialization_seconds": initialization, "export_seconds": time.perf_counter()-started,
+            "frames": total, "encoder": "libx264", "preset": "medium", "crf": 23}
 
 
 def decoded_frames(video, indices, full):
@@ -89,7 +94,7 @@ def decoded_frames(video, indices, full):
                 yield index, frame.to_ndarray(format="rgb24")
 
 
-def verify(data, video, directory=MEDIA, draft=False, *, full=False):
+def verify(data, video, directory=MEDIA, *, full=False, compose=None):
     """Quick sampled audit by default; --full decodes and compares every frame."""
     indices = audit_indices(data, full)
     destination = directory / "verification.json"
@@ -102,7 +107,7 @@ def verify(data, video, directory=MEDIA, draft=False, *, full=False):
     info = json.loads(result.stdout)
     streams = info["streams"]
     videos = [s for s in streams if s["codec_type"] == "video"]
-    width, height = (360, 640) if draft else (WIDTH, HEIGHT)
+    width, height = WIDTH, HEIGHT
     stream = videos[0] if videos else {}
     checks = {
         "one_silent_video_stream": len(streams) == len(videos) == 1,
@@ -116,7 +121,6 @@ def verify(data, video, directory=MEDIA, draft=False, *, full=False):
     with video.open("rb") as source:
         video_hash = hashlib.file_digest(source, "sha256").hexdigest()
     report.update({"checks": checks, "video": str(video), "coverage": data["coverage"],
-                   "synthetic_test_only": bool(data.get("synthetic_test_only")),
                    "scheduled_preview": bool(data.get("scheduled_preview")), "date": data.get("date"), "basis": data.get("basis"),
                    "categories": data.get("categories", CATEGORIES),
                    "palette_basis": data.get("palette_basis"),
@@ -128,7 +132,7 @@ def verify(data, video, directory=MEDIA, draft=False, *, full=False):
         report["status"] = "failed"
         write_json(destination, report)
         raise RuntimeError("Encoded video metadata failed verification")
-    compose = FrameRenderer(data)
+    compose = compose or FrameRenderer(data)
     max_error, max_hud, max_marker, frames, last_hold, hold_error = 0., 0., 0., 0, None, 0.
     decoded = decoded_frames(video, indices, full)
     try:
@@ -136,8 +140,6 @@ def verify(data, video, directory=MEDIA, draft=False, *, full=False):
             if frames >= len(indices) or index != indices[frames] or actual.shape != (height, width, 3):
                 raise RuntimeError("Unexpected video frame count or dimensions")
             expected = compose(index/FPS)
-            if draft:
-                expected = expected.resize((width, height), Image.Resampling.LANCZOS)
             # Signed 16-bit differences avoid allocating multiple 50 MB float frames.
             delta = np.abs(np.subtract(actual, np.asarray(expected), dtype=np.int16))
             scale = width/WIDTH

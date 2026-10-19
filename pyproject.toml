@@ -1,15 +1,18 @@
 [project]
 name = "origami"
 version = "0.1.0"
-description = "Mathematical animations made with Manim Community"
+description = "Independent video projects"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "manim>=0.21.0,<0.22",
+    "av>=18,<19",
+    "matplotlib>=3.10,<4",
+    "numpy>=2.1,<3",
+    "pillow>=11,<13",
     "pyproj>=3.7,<4",
     "pyshp>=3,<4",
-    "portalocker>=3,<4",
-    "tzdata>=2025.2",
+    "scipy>=1.15,<2",
 ]
 
 [tool.uv]

@@ -2,7 +2,7 @@
 
 Run from the repository root. Pages and assembled GeoJSON stay in media/tooling;
 prepare_tracks.py creates the attributed, compressed project input assets.
-No traffic observations, credentials, or RailRadar quota are used.
+No traffic observations or credentials are used.
 """
 import concurrent.futures
 import json

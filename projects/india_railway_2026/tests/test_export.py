@@ -10,7 +10,7 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 import replay
-from demo import build_demo
+from tests.fixtures import timetable
 from design import FrameRenderer
 
 
@@ -32,12 +32,21 @@ class AuditTests(unittest.TestCase):
                 list(replay.decoded_frames("fixture", [1], False))
 
     def test_sample_boundaries_and_peak(self):
-        data = build_demo()
+        data = timetable()
         indices = replay.audit_indices(data)
         self.assertEqual(indices, sorted(set(indices)))
         self.assertTrue({0, 89, 90, 1709, 1710, 1799} <= set(indices))
         self.assertLessEqual(len(indices), 18)
         self.assertEqual(replay.audit_indices(data, True), list(range(1800)))
+
+    def test_poster_samples_inside_the_exact_peak_interval(self):
+        data = {"journeys": [{"segments": [{"start": 28920, "end": 28980}]}]}
+        with tempfile.TemporaryDirectory() as folder, patch.object(replay, "FrameRenderer") as renderer:
+            renderer.return_value.return_value = Image.new("RGB", (1080, 1920))
+            replay.export_stills(data, Path(folder))
+        peak = replay.second_at(renderer.return_value.call_args_list[0].args[0])
+        self.assertGreaterEqual(peak, 28920)
+        self.assertLess(peak, 28980)
 
     def audit(self, full=False, metadata=None, truncate=False, corrupt=False):
         data = {"activity": [0, 2, 0], "coverage": {}, "journeys": []}
@@ -88,7 +97,7 @@ class AuditTests(unittest.TestCase):
                 self.audit(**options)
 
     def test_static_holds_are_cached_and_dataset_unchanged(self):
-        data = build_demo()
+        data = timetable()
         original = json.dumps(data, sort_keys=True)
         compose = FrameRenderer(data)
         with patch.object(compose, "draw", wraps=compose.draw) as draw:
@@ -97,12 +106,21 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(draw.call_count, 2)
         self.assertEqual(json.dumps(data, sort_keys=True), original)
 
-    def test_shared_manim_helper_passes_dataset_and_restores_config(self):
-        import scene
-        data = {"synthetic_test_only": True}
-        original = scene.config.copy()
-        with patch.object(scene, "deny_network"), patch.object(scene, "IndiaRailway2026") as animation:
-            scene.render_video(data, Path("unused-test-output"), True, "SYNTHETIC_TEST")
-            animation.assert_called_once_with(dataset=data)
-            animation.return_value.render.assert_called_once_with()
-        self.assertEqual(dict(scene.config), dict(original))
+    def test_direct_encoder_has_exact_timestamps_and_flushes_delayed_packets(self):
+        container = unittest.mock.MagicMock()
+        stream = container.add_stream.return_value
+        stream.encode.return_value = ["packet"]
+        with patch.multiple(replay, INTRO=0, REPLAY=1, OUTRO=0, FPS=3), \
+             patch.object(replay, "FrameRenderer") as renderer, \
+             patch.object(replay.av, "open") as opened, \
+             patch.object(replay.av, "VideoFrame") as video_frame:
+            frame = video_frame.from_ndarray
+            opened.return_value.__enter__.return_value = container
+            renderer.return_value.return_value = Image.new("RGB", (18, 320))
+            replay.render_video({}, Path("unused.mp4"))
+            self.assertEqual(renderer.return_value.call_args_list[-1].args, (2/3,))
+            self.assertEqual(stream.encode.call_count, 4)
+            self.assertEqual(stream.encode.call_args.args, ())
+            self.assertEqual(frame.return_value.pts, 2)
+            self.assertEqual(container.mux.call_count, 4)
+            opened.return_value.__exit__.assert_called_once()
