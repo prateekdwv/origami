@@ -30,8 +30,10 @@ The final command writes `media/india_railway_2026/final/2026-10-15/India_Railwa
 using H.264 CRF 18 instead of test CRF 23, with the same approved canvas and timing.
 It reuses the scheduled movement cache and publishes only after every encoded frame
 passes comparison. Source-data qualifications remain visible in the final video.
-The same directory holds a poster, contact sheet, compressed prepared dataset,
-mapping coverage and sampled video verification. Inputs are hash-checked before
+Both export directories hold a poster, contact sheet, mapping coverage and video
+verification. The compressed prepared dataset stays in the test directory and is
+shared by both commands. Test verification samples frames; final verification
+compares every frame. Inputs are hash-checked before
 reusing the prepared dataset; source snapshots are never modified. Only the main
 dated projection is used; review-only schedules remain excluded.
 
