@@ -56,7 +56,7 @@ class FrameRenderer:
         anchors = display_points(pixels(project([[lon, lat] for _, lon, lat, _, _ in CITIES])))
         self.ax.scatter(anchors[:, 0], anchors[:, 1], s=(4*.72)**2, color=MUTED)
         day = date.fromisoformat(dataset['date'])
-        self.text(56, 44, 'India\u2019s railways', 40, bold=True)
+        self.text(56, 44, 'Indian Railways', 40, bold=True)
         self.text(1024, 52, f'{day.day:02d} {day:%b} {day.year} \u00b7 IST', 24, MUTED, right=True)
         total = f"{len(dataset['journeys']):,}"
         self.text(56, 100, total, 40, bold=True)
